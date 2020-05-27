@@ -36,14 +36,12 @@ void setup() {
 
   // Pause the timer while we're configuring it
   timer.pause();
-
   // Set up period
   timer.setPeriod(RATE); // in microseconds
-
   // Set up an interrupt on channel 1
   timer.setChannel1Mode(TIMER_OUTPUT_COMPARE);
   timer.setCompare(TIMER_CH1, 1);  // Interrupt 1 count after each update
-  timer.attachCompare1Interrupt(handler_led);
+  timer.attachCompare1Interrupt(handler_sections);
 
   // Refresh the timer's count, prescale, and overflow
   timer.refresh();
@@ -73,9 +71,12 @@ uint8_t volatile hall2 = 0;
 uint8_t volatile hall3 = 0;
 uint16_t volatile hall_int_num = 0;
 uint8_t volatile hall_sektor = 0;
+uint16_t volatile hall_rotations = 0;
+uint8_t volatile hall_old_sektor = -1;
 #define ERR 10
 
 void calc_rotation(){
+  hall_int_num++;
   if(hall1){
     if(hall2){
       if(hall3) //111
@@ -101,6 +102,14 @@ void calc_rotation(){
         hall_sektor = ERR+1;
     }
   }
+  if(hall_sektor != hall_old_sektor){
+    handler_sections();
+    if(hall_sektor==0 && hall_old_sektor==5)
+      hall_rotations++;
+    if(hall_sektor==5 && hall_old_sektor==0)
+      hall_rotations--;
+  }
+  hall_old_sektor = hall_sektor;
 }
 
 void Hall1_ISR()
@@ -109,7 +118,6 @@ void Hall1_ISR()
     hall1 = 0;
   else
     hall1 = 1;
-  hall_int_num++;
   calc_rotation();
 }
 void Hall2_ISR()
@@ -118,7 +126,6 @@ void Hall2_ISR()
     hall2 = 0;
   else
     hall2 = 1;
-  hall_int_num++;
   calc_rotation();
 }
 void Hall3_ISR()
@@ -127,7 +134,6 @@ void Hall3_ISR()
     hall3 = 0;
   else
     hall3 = 1;
-  hall_int_num++;
   calc_rotation();
 }
 
@@ -135,21 +141,24 @@ int hz;
 int st = 0;
 
 void loop() {
-  //timer.pause();
+  timer.pause();
   //digitalWrite(EN1, 0); digitalWrite(EN2, 0); digitalWrite(EN3, 0);
 
-
-  Serial.print("\t");
+  /*Serial.print("\t");
   Serial.print(digitalRead(HAL1));
   Serial.print("\t");
   Serial.print(digitalRead(HAL2));
   Serial.print("\t");
-  Serial.print(digitalRead(HAL3));
-  Serial.print("\t");
+  Serial.print(digitalRead(HAL3));*/
+  Serial.print(" |\trot ");
+  Serial.print(hall_rotations);
+  Serial.print("\t hall");
   Serial.print(hall_sektor);
-  Serial.print("\t");
-
-  Serial.print(st/2.0+6);
+  Serial.print("\t state");
+  Serial.print(st);
+  Serial.print("\t interrupts");
+  Serial.print(hall_int_num);
+  hall_int_num=0;
   Serial.println("\t");
 
   hz = map(avg_adc(PA0, 40), 0, 4096, 1, 700);
@@ -160,7 +169,7 @@ void loop() {
 }
 
 
-void handler_led(void) {
+void handler_sections(void) {
   digitalWrite(PC13, st & 0x01);
   st = (hall_sektor+1)%6;
   switch(st){
@@ -213,14 +222,4 @@ void handler_led(void) {
       digitalWrite(EN3, 1);
       break;
   }
-
-  //Serial.print(space);
-  //Serial.print("\t");
-  //Serial.print(st);
-  //Serial.println();
-
-  //st += 1;
-  //if(st >= 6){
-  //  st = 0;
-  //}
 }
