@@ -2,10 +2,13 @@
 
 #define EN1 PB8
 #define IN1 PB7
+#define IN1_ 7
 #define EN2 PB6
 #define IN2 PB5
+#define IN2_ 5
 #define EN3 PB4
 #define IN3 PB3
+#define IN3_ 3
 
 #define HAL1 PA8
 #define HAL2 PB13
@@ -13,6 +16,12 @@
 
 // use timer 2
 HardwareTimer timer(2);
+
+int hz_to_us(int f)
+{
+  return 1000000/f;
+}
+
 
 void setup() {
   // Set up the LED to blink
@@ -23,6 +32,9 @@ void setup() {
   pinMode(EN1, OUTPUT);
   pinMode(EN2, OUTPUT);
   pinMode(EN3, OUTPUT);
+  digitalWrite(EN1, 0);
+  digitalWrite(EN2, 0);
+  digitalWrite(EN3, 0);
 
   pinMode(HAL1, INPUT_PULLUP);
   pinMode(HAL2, INPUT_PULLUP);
@@ -34,27 +46,21 @@ void setup() {
 
   Serial.begin(115200);
 
-  // Pause the timer while we're configuring it
+  //setting up switching PWM
   timer.pause();
-  // Set up period
-  timer.setPeriod(RATE); // in microseconds
-  // Set up an interrupt on channel 1
-  timer.setChannel1Mode(TIMER_OUTPUT_COMPARE);
-  timer.setCompare(TIMER_CH1, 1);  // Interrupt 1 count after each update
-  timer.attachCompare1Interrupt(handler_sections);
-
-  // Refresh the timer's count, prescale, and overflow
+  timer.setPeriod(hz_to_us(20000));
+  timer.setMode(1, TIMER_OUTPUT_COMPARE);
+  timer.setMode(2, TIMER_OUTPUT_COMPARE);
+  timer.setCompare(TIMER_CH1, timer.getOverflow());  // Interrupt when count reaches
+  timer.setCompare(TIMER_CH2, timer.getOverflow());  // Interrupt when count reaches 1
+  timer.attachInterrupt(1, handler_pwm_high);
+  timer.attachInterrupt(2, handler_pwm_low);
+  //to disable jitter due to systick interrupts, delay() does not work though
+  //systick_disable();
+  //alternatively you could set interrupt priority
+  nvic_irq_set_priority(NVIC_TIMER2, 0);     //highest priority for Timer2
   timer.refresh();
-
-  // Start the timer counting
   timer.resume();
-}
-
-
-
-int hz_to_us(int f)
-{
-  return 1000000/f;
 }
 
 
@@ -65,6 +71,31 @@ int avg_adc(int pin, int n){
   }
   return sum/n;
 }
+
+void setDutycyle(float dutycycle){
+  int comp = (timer.getOverflow()*dutycycle)/100;
+  bool static detached = false;
+  if(dutycycle > 99.5){
+    timer.detachInterrupt(2);
+    detached = true;
+  }
+  else if(comp < 50){
+    timer.detachInterrupt(1);
+    detached = true;
+  }
+  else{
+    if(detached){
+      timer.attachInterrupt(1, handler_pwm_high);
+      timer.attachInterrupt(2, handler_pwm_low);
+      detached = false;
+    }
+  }
+  timer.setCompare(TIMER_CH2, comp);
+  Serial.print(comp);
+}
+
+
+//// HALL Sensor start -------
 
 uint8_t volatile hall1 = 0;
 uint8_t volatile hall2 = 0;
@@ -103,7 +134,8 @@ void calc_rotation(){
     }
   }
   if(hall_sektor != hall_old_sektor){
-    handler_sections();
+    handler_sections();  //// advancing commutation sector
+
     if(hall_sektor==0 && hall_old_sektor==5)
       hall_rotations++;
     if(hall_sektor==5 && hall_old_sektor==0)
@@ -137,40 +169,48 @@ void Hall3_ISR()
   calc_rotation();
 }
 
+//// HALL Sensor end -------
+
+
 int hz;
 int st = 0;
 
 void loop() {
-  timer.pause();
-  //digitalWrite(EN1, 0); digitalWrite(EN2, 0); digitalWrite(EN3, 0);
+  float duty = avg_adc(PA0, 40)/40.96;
 
-  /*Serial.print("\t");
-  Serial.print(digitalRead(HAL1));
-  Serial.print("\t");
-  Serial.print(digitalRead(HAL2));
-  Serial.print("\t");
-  Serial.print(digitalRead(HAL3));*/
-  Serial.print(" |\trot ");
+  Serial.print(IN1_);
+  Serial.print(" ");
+  Serial.print(IN2_);
+  Serial.print(" ");
+  Serial.print(IN3_);
+  Serial.print(" ");
+  Serial.print("overflow ");
+  Serial.print(timer.getOverflow());
+  Serial.print("\t duty ");
+  Serial.print(duty);
+
+  Serial.print("\t rot ");
   Serial.print(hall_rotations);
   Serial.print("\t hall");
   Serial.print(hall_sektor);
-  Serial.print("\t state");
+  Serial.print("\t sektor");
   Serial.print(st);
+
   Serial.print("\t interrupts");
   Serial.print(hall_int_num);
   hall_int_num=0;
+
+  Serial.print("\t compare ");
+  setDutycyle(duty);
   Serial.println("\t");
 
-  hz = map(avg_adc(PA0, 40), 0, 4096, 1, 700);
-
-  timer.setPeriod(hz_to_us(hz));
   delay(10);
-
 }
 
+volatile int pwm_pin = IN1;
 
 void handler_sections(void) {
-  digitalWrite(PC13, st & 0x01);
+  //digitalWrite(PC13, st & 0x01);
   st = (hall_sektor+1)%6;
   switch(st){
     case 0:
@@ -180,6 +220,7 @@ void handler_sections(void) {
       digitalWrite(IN2, 1);
       digitalWrite(EN1, 1);
       digitalWrite(EN2, 1);
+      pwm_pin = IN2_;
       break;
     case 1:
       digitalWrite(EN1, 0); digitalWrite(EN2, 0); digitalWrite(EN3, 0);
@@ -188,6 +229,7 @@ void handler_sections(void) {
       digitalWrite(IN3, 0);
       digitalWrite(EN2, 1);
       digitalWrite(EN3, 1);
+      pwm_pin = IN2_;
       break;
     case 2:
       digitalWrite(EN1, 0); digitalWrite(EN2, 0); digitalWrite(EN3, 0);
@@ -196,6 +238,7 @@ void handler_sections(void) {
       digitalWrite(IN3, 0);
       digitalWrite(EN1, 1);
       digitalWrite(EN3, 1);
+      pwm_pin = IN1_;
       break;
     case 3:
       digitalWrite(EN1, 0); digitalWrite(EN2, 0); digitalWrite(EN3, 0);
@@ -204,6 +247,7 @@ void handler_sections(void) {
       digitalWrite(IN2, 0);
       digitalWrite(EN1, 1);
       digitalWrite(EN2, 1);
+      pwm_pin = IN1_;
       break;
     case 4:
       digitalWrite(EN1, 0); digitalWrite(EN2, 0); digitalWrite(EN3, 0);
@@ -212,6 +256,7 @@ void handler_sections(void) {
       digitalWrite(IN3, 1);
       digitalWrite(EN2, 1);
       digitalWrite(EN3, 1);
+      pwm_pin = IN3_;
       break;
     case 5:
       digitalWrite(EN1, 0); digitalWrite(EN2, 0); digitalWrite(EN3, 0);
@@ -220,6 +265,19 @@ void handler_sections(void) {
       digitalWrite(IN3, 1);
       digitalWrite(EN1, 1);
       digitalWrite(EN3, 1);
+      pwm_pin = IN3_;
       break;
   }
 }
+
+void handler_pwm_low(void) {
+  //Clear C13 (LOW)
+  GPIOB->regs->BRR = 1<<pwm_pin; //lower 16 bits
+  GPIOC->regs->BRR = 0b0010000000000000;
+}
+void handler_pwm_high(void) {
+  //Set C13 (HIGH)
+  GPIOB->regs->BSRR = 1<<pwm_pin; //lower 16 bits
+  GPIOC->regs->BSRR = 0b0010000000000000;
+}
+
