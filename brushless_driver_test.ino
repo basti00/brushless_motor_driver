@@ -1,13 +1,14 @@
 #define RATE 1000000    // in microseconds
 
+//on PORT B
 #define EN1 PB8
-#define IN1 PB7
-#define IN1_ 7
 #define EN2 PB6
-#define IN2 PB5
-#define IN2_ 5
 #define EN3 PB4
+#define IN1 PB7
+#define IN2 PB5
 #define IN3 PB3
+#define IN1_ 7
+#define IN2_ 5
 #define IN3_ 3
 
 #define HAL1 PA8
@@ -48,7 +49,7 @@ void setup() {
 
   //setting up switching PWM
   timer.pause();
-  timer.setPeriod(hz_to_us(20000));
+  timer.setPeriod(hz_to_us(10000));
   timer.setMode(1, TIMER_OUTPUT_COMPARE);
   timer.setMode(2, TIMER_OUTPUT_COMPARE);
   timer.setCompare(TIMER_CH1, timer.getOverflow());  // Interrupt when count reaches
@@ -91,7 +92,7 @@ void setDutycyle(float dutycycle){
     }
   }
   timer.setCompare(TIMER_CH2, comp);
-  Serial.print(comp);
+  //Serial.print(comp);
 }
 
 
@@ -111,7 +112,10 @@ void calc_rotation(){
   if(hall1){
     if(hall2){
       if(hall3) //111
+      {
         hall_sektor = ERR;
+        return;
+      }
       else //110
         hall_sektor = 2;
     }else{
@@ -130,7 +134,10 @@ void calc_rotation(){
       if(hall3) //001
         hall_sektor = 5;
       else // 000
+      {
         hall_sektor = ERR+1;
+        return;
+      }
     }
   }
   if(hall_sektor != hall_old_sektor){
@@ -176,7 +183,9 @@ int hz;
 int st = 0;
 
 void loop() {
-  float duty = avg_adc(PA0, 40)/40.96;
+  float static duty = 0;
+  float tp = 0.05;
+  duty = duty*(1-tp) + tp * avg_adc(PA0, 40)/40.96;
 
   Serial.print(IN1_);
   Serial.print(" ");
@@ -201,83 +210,77 @@ void loop() {
   hall_int_num=0;
 
   Serial.print("\t compare ");
-  setDutycyle(duty);
   Serial.println("\t");
+  setDutycyle(duty);
 
-  delay(10);
+  for(float i = 0; i<10000; i++)
+    ;
+  //delay(10);
 }
 
 volatile int pwm_pin = IN1;
+volatile uint8_t pwm_st = 0;
+
+/*
+
+#define EN1 PB8
+#define EN2 PB6
+#define EN3 PB4
+#define IN1 PB7
+#define IN2 PB5
+#define IN3 PB3
+ */
 
 void handler_sections(void) {
   //digitalWrite(PC13, st & 0x01);
+  noInterrupts();
   st = (hall_sektor+1)%6;
+  GPIOB->regs->BRR =  0b0000000111111000; //disable all
   switch(st){
     case 0:
-      digitalWrite(EN1, 0); digitalWrite(EN2, 0); digitalWrite(EN3, 0);
-
-      digitalWrite(IN1, 0);
-      digitalWrite(IN2, 1);
-      digitalWrite(EN1, 1);
-      digitalWrite(EN2, 1);
+      // IN1 low
       pwm_pin = IN2_;
+      GPIOB->regs->BSRR =  0b0000000101000000 | (pwm_st << pwm_pin);
       break;
     case 1:
-      digitalWrite(EN1, 0); digitalWrite(EN2, 0); digitalWrite(EN3, 0);
-
-      digitalWrite(IN2, 1);
-      digitalWrite(IN3, 0);
-      digitalWrite(EN2, 1);
-      digitalWrite(EN3, 1);
+      // IN3 low
       pwm_pin = IN2_;
+      GPIOB->regs->BSRR =  0b0000000001010000 | (pwm_st << pwm_pin);
       break;
     case 2:
-      digitalWrite(EN1, 0); digitalWrite(EN2, 0); digitalWrite(EN3, 0);
-
-      digitalWrite(IN1, 1);
-      digitalWrite(IN3, 0);
-      digitalWrite(EN1, 1);
-      digitalWrite(EN3, 1);
+      // IN3 low
       pwm_pin = IN1_;
+      GPIOB->regs->BSRR =  0b0000000100010000 | (pwm_st << pwm_pin);
       break;
     case 3:
-      digitalWrite(EN1, 0); digitalWrite(EN2, 0); digitalWrite(EN3, 0);
-
-      digitalWrite(IN1, 1);
-      digitalWrite(IN2, 0);
-      digitalWrite(EN1, 1);
-      digitalWrite(EN2, 1);
+      // IN2 low
       pwm_pin = IN1_;
+      GPIOB->regs->BSRR =  0b0000000101000000 | (pwm_st << pwm_pin);
       break;
     case 4:
-      digitalWrite(EN1, 0); digitalWrite(EN2, 0); digitalWrite(EN3, 0);
-
-      digitalWrite(IN2, 0);
-      digitalWrite(IN3, 1);
-      digitalWrite(EN2, 1);
-      digitalWrite(EN3, 1);
+      // IN2 low
       pwm_pin = IN3_;
+      GPIOB->regs->BSRR =  0b0000000001010000 | (pwm_st << pwm_pin);
       break;
     case 5:
-      digitalWrite(EN1, 0); digitalWrite(EN2, 0); digitalWrite(EN3, 0);
-
-      digitalWrite(IN1, 0);
-      digitalWrite(IN3, 1);
-      digitalWrite(EN1, 1);
-      digitalWrite(EN3, 1);
+      // IN1 low
       pwm_pin = IN3_;
+      GPIOB->regs->BSRR =  0b0000000100010000 | (pwm_st << pwm_pin);
       break;
   }
+  interrupts();
 }
 
 void handler_pwm_low(void) {
   //Clear C13 (LOW)
   GPIOB->regs->BRR = 1<<pwm_pin; //lower 16 bits
   GPIOC->regs->BRR = 0b0010000000000000;
+  pwm_st = 1;
 }
 void handler_pwm_high(void) {
   //Set C13 (HIGH)
   GPIOB->regs->BSRR = 1<<pwm_pin; //lower 16 bits
   GPIOC->regs->BSRR = 0b0010000000000000;
+  pwm_st = 0;
 }
 
