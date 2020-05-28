@@ -49,7 +49,7 @@ void setup() {
 
   //setting up switching PWM
   timer.pause();
-  timer.setPeriod(hz_to_us(10000));
+  timer.setPeriod(hz_to_us(30000));
   timer.setMode(1, TIMER_OUTPUT_COMPARE);
   timer.setMode(2, TIMER_OUTPUT_COMPARE);
   timer.setCompare(TIMER_CH1, timer.getOverflow());  // Interrupt when count reaches
@@ -73,8 +73,8 @@ int avg_adc(int pin, int n){
   return sum/n;
 }
 
-void setDutycyle(float dutycycle){
-  int comp = (timer.getOverflow()*dutycycle)/100;
+uint16_t setDutycyle(float dutycycle){
+  uint16_t comp = (timer.getOverflow()*dutycycle)/100;
   bool static detached = false;
   if(dutycycle > 99.5){
     timer.detachInterrupt(2);
@@ -92,7 +92,7 @@ void setDutycyle(float dutycycle){
     }
   }
   timer.setCompare(TIMER_CH2, comp);
-  //Serial.print(comp);
+  return comp;
 }
 
 
@@ -178,25 +178,20 @@ void Hall3_ISR()
 
 //// HALL Sensor end -------
 
-
-int hz;
 int st = 0;
+unsigned long loops = 0;
 
-void loop() {
+void printInfo(){
   float static duty = 0;
   float tp = 0.05;
   duty = duty*(1-tp) + tp * avg_adc(PA0, 40)/40.96;
 
-  Serial.print(IN1_);
-  Serial.print(" ");
-  Serial.print(IN2_);
-  Serial.print(" ");
-  Serial.print(IN3_);
-  Serial.print(" ");
-  Serial.print("overflow ");
-  Serial.print(timer.getOverflow());
-  Serial.print("\t duty ");
-  Serial.print(duty);
+  Serial.print("loops ");
+  Serial.print(loops);
+  loops = 0;
+  Serial.print("\t interrupts");
+  Serial.print(hall_int_num);
+  hall_int_num=0;
 
   Serial.print("\t rot ");
   Serial.print(hall_rotations);
@@ -205,31 +200,35 @@ void loop() {
   Serial.print("\t sektor");
   Serial.print(st);
 
-  Serial.print("\t interrupts");
-  Serial.print(hall_int_num);
-  hall_int_num=0;
 
-  Serial.print("\t compare ");
+  Serial.print("\toverflow ");
+  Serial.print(timer.getOverflow());
+  Serial.print("\tduty ");
+  Serial.print(duty);
+
+  Serial.print("\tcompare ");
+  Serial.print(setDutycyle(duty));
   Serial.println("\t");
-  setDutycyle(duty);
+}
 
-  for(float i = 0; i<10000; i++)
-    ;
-  //delay(10);
+
+//unblocking info delay
+int period = 10;
+unsigned long time_now = 0;
+
+void loop()
+{
+  loops++;
+  if(millis() >= time_now + period){
+    time_now += period;
+    printInfo();
+    loops = 0;
+  }
+
 }
 
 volatile int pwm_pin = IN1;
 volatile uint8_t pwm_st = 0;
-
-/*
-
-#define EN1 PB8
-#define EN2 PB6
-#define EN3 PB4
-#define IN1 PB7
-#define IN2 PB5
-#define IN3 PB3
- */
 
 void handler_sections(void) {
   //digitalWrite(PC13, st & 0x01);
