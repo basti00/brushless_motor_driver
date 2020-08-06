@@ -7,6 +7,12 @@
 
 HardwareTimer timer(2);
 
+// check if timer is counting up or down
+#define TIMER_DIRECTION ((TIMER2->regs).bas->CR1 & 1<<4)
+#define HZ_TO_US(f) (1000000/f)
+#define PI_THIRD 1.04719755f
+
+
 //redeclaring the private static member variables
 uint8_t volatile Brushless::hall1 = 0;
 uint8_t volatile Brushless::hall2 = 0;
@@ -15,10 +21,18 @@ uint16_t volatile Brushless::hall_int_num = 0;
 uint8_t volatile Brushless::hall_sektor = 0;
 uint16_t volatile Brushless::hall_rotations = 0;
 uint8_t volatile Brushless::hall_old_sektor = -1;
+volatile SVM_vector Brushless::vx_ = SVM_V8;
+volatile SVM_vector Brushless::vy_ = SVM_V8;
 
 
 Brushless::Brushless()
 {
+  //debug
+  pinMode(PC13, OUTPUT);
+  pinMode(PC14, OUTPUT);
+  pinMode(PC15, OUTPUT);
+  pinMode(PB0, OUTPUT);
+
   // Output
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
@@ -29,6 +43,7 @@ Brushless::Brushless()
   digitalWrite(EN1, 0);
   digitalWrite(EN2, 0);
   digitalWrite(EN3, 0);
+
   // Input
   pinMode(HAL1, INPUT_PULLUP);
   pinMode(HAL2, INPUT_PULLUP);
@@ -38,15 +53,22 @@ Brushless::Brushless()
   attachInterrupt(digitalPinToInterrupt(HAL3), Hall3_ISR, CHANGE);
 }
 
-void Brushless::setupTimer(){
+void Brushless::setupPWMTimer(uint32_t f){
+  // Pause the timer while we're configuring it
   timer.pause();
-  timer.setPeriod(hz_to_us(30000));
+  t_ = HZ_TO_US(f);
+  timer.setPeriod(HZ_TO_US(f));
   timer.setMode(1, TIMER_OUTPUT_COMPARE);
   timer.setMode(2, TIMER_OUTPUT_COMPARE);
-  timer.setCompare(TIMER_CH1, timer.getOverflow());  // Interrupt when count reaches
-  timer.setCompare(TIMER_CH2, timer.getOverflow());  // Interrupt when count reaches 1
-  timer.attachInterrupt(1, handler_pwm_high);
-  timer.attachInterrupt(2, handler_pwm_low);
+  timer.setMode(3, TIMER_OUTPUT_COMPARE);
+  timer.setCompare(TIMER_CH1, timer.getOverflow());
+  timer.setCompare(TIMER_CH2, timer.getOverflow());
+  timer.setCompare(TIMER_CH3, timer.getOverflow());
+  (TIMER2->regs).bas->CR1 |= 0b11<<5; //Set to center aligned mode, generate INT at up & down part
+  timer.attachInterrupt(1, handler_pwm1);
+  timer.attachInterrupt(2, handler_pwm2);
+  timer.attachInterrupt(3, handler_pwm3);
+  timer.attachInterrupt(0, handler_overflow);
   //to disable jitter due to systick interrupts, delay() does not work though
   //systick_disable();
   //alternatively you could set interrupt priority
@@ -56,25 +78,52 @@ void Brushless::setupTimer(){
 }
 
 uint16_t Brushless::setDutycyle(float dutycycle){
-  uint16_t comp = (timer.getOverflow()*dutycycle)/100;
-  bool static detached = false;
-  if(dutycycle > 99.5){
-    timer.detachInterrupt(2);
-    detached = true;
-  }
-  else if(comp < 50){
-    timer.detachInterrupt(1);
-    detached = true;
-  }
-  else{
-    if(detached){
-      timer.attachInterrupt(1, handler_pwm_high);
-      timer.attachInterrupt(2, handler_pwm_low);
-      detached = false;
-    }
-  }
-  timer.setCompare(TIMER_CH2, comp);
+  int comp = (timer.getOverflow()*dutycycle)/100;
+  timer.setCompare(TIMER_CH1, comp);
+  timer.setCompare(TIMER_CH2, comp/2);
+  timer.setCompare(TIMER_CH3, comp/3);
+  Serial.print(comp);
   return comp;
+}
+
+uint16_t Brushless::setPosition(float m_param, float angle){
+  alpha_ = fMod(angle, PI_THIRD);
+  m_ = m_param;
+
+  //// todo probably noInterrupt(); needed
+  if(alpha_ < PI_THIRD){
+    vx_ = SVM_V1;
+    vy_ = SVM_V3;
+  } else if(alpha_ < 2*PI_THIRD){
+    vx_ = SVM_V3;
+    vy_ = SVM_V2;
+  } else if(alpha_ < 3*PI_THIRD){
+    vx_ = SVM_V2;
+    vy_ = SVM_V6;
+  } else if(alpha_ < 4*PI_THIRD){
+    vx_ = SVM_V6;
+    vy_ = SVM_V4;
+  } else if(alpha_ < 5*PI_THIRD){
+    vx_ = SVM_V4;
+    vy_ = SVM_V5;
+  } else {
+    vx_ = SVM_V5;
+    vy_ = SVM_V1;
+  }
+  t1_ = t_ * m_ * sin((PI_THIRD - alpha_));
+  t2_ = t_ * m_ * sin(alpha_);
+  t0_ = t_ - t1_ - t2_;
+  float t0_half = t0_/2;
+
+  float ovrflw = timer.getOverflow();
+  float OCR1 = ovrflw * t0_half / t_;
+  float OCR2 = OCR1 + ovrflw * t1_ / t_;
+  float OCR3 = OCR2 + ovrflw * t2_ / t_;
+
+  timer.setCompare(TIMER_CH1, (uint16_t) OCR1);
+  timer.setCompare(TIMER_CH2, (uint16_t) OCR2);
+  timer.setCompare(TIMER_CH3, (uint16_t) OCR3);
+  return 0;
 }
 
 #define ERR 10
@@ -82,7 +131,15 @@ uint16_t Brushless::setDutycyle(float dutycycle){
 int st = 0;
 
 String Brushless::getInfo(){
-  return "None";
+  return ""
+         + dash("m",m_)
+         + dash("alpha",alpha_)
+         + dash("t", (int) t_)
+         + dash("vx", vx_)
+         + dash("vy", vy_)
+         + dash("t0", t0_)
+         + dash("t1", t1_)
+         + dash("t2", t2_);
 }
 
 
@@ -202,14 +259,14 @@ void Brushless::Hall3_ISR()
 void Brushless::handler_pwm_low() {
   //Clear C13 (LOW)
   GPIOB->regs->BRR = 1<<pwm_pin; //lower 16 bits
-  GPIOC->regs->BRR = 0b0010000000000000;
+  GPIOC->regs->BRR = 0b0010000000000000; //PC13
   pwm_st = 1;
 }
 
 void Brushless::handler_pwm_high() {
   //Set C13 (HIGH)
   GPIOB->regs->BSRR = 1<<pwm_pin; //lower 16 bits
-  GPIOC->regs->BSRR = 0b0010000000000000;
+  GPIOC->regs->BSRR = 0b0010000000000000; //PC13
   pwm_st = 0;
 }
 
@@ -221,4 +278,47 @@ String dash(String name, float val){
 }
 String dash(String name, String val){
   return (name + " " + val + "\t");
+}
+
+float fMod(float a, float b)
+{
+  float mod;
+  if (a < 0)
+    mod = -a;
+  else
+    mod =  a;
+  if (b < 0)
+    b = -b;
+  mod -= ((int)(mod/b))*b;
+  if (a < 0)
+    return -mod;
+  return mod;
+}
+
+void Brushless::handler_pwm1(void) {
+  if(TIMER_DIRECTION)
+    GPIOC->regs->BRR = 0b0100000000000000;
+  else
+    GPIOC->regs->BSRR = 0b0100000000000000;
+}
+
+void Brushless::handler_pwm2(void) {
+  if(TIMER_DIRECTION)
+    GPIOC->regs->BRR = 0b0010000000000000;
+  else
+    GPIOC->regs->BSRR = 0b0010000000000000;
+}
+
+void Brushless::handler_pwm3(void) {
+  if(TIMER_DIRECTION)
+    GPIOB->regs->BRR = 0b0000000000000001;
+  else
+    GPIOB->regs->BSRR = 0b0000000000000001;
+}
+
+void Brushless::handler_overflow(void) {
+  if(TIMER_DIRECTION)
+    GPIOC->regs->BRR = 0b1000000000000000;
+  else
+    GPIOC->regs->BSRR = 0b1000000000000000;
 }
