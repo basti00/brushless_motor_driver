@@ -36,11 +36,10 @@ typedef enum SVM_vector{
   SVM_V4,
   SVM_V5,
   SVM_V7, //connected to VCC
-  SVM_ENA  //enable all
 }SVM_vector;
 
 // using hardcoded pin-configs (todo make dynamic)
-const uint16_t SVM_HW_pins[] = {
+const uint8_t SVM_HW_pins[] = {
         0,                       //SVM_V0, // connected to GND
         (1<<IN_A_),              //SVM_V1,
         (1<<IN_A_) | (1<<IN_B_), //SVM_V3,
@@ -49,7 +48,6 @@ const uint16_t SVM_HW_pins[] = {
         (1<<IN_C_),              //SVM_V4,
         (1<<IN_C_) | (1<<IN_A_), //SVM_V5,
         (1<<IN_A_) | (1<<IN_B_) | (1<<IN_C_), //SVM_V7, //connected to VCC
-        (1<<EN_A_) | (1<<EN_B_) | (1<<EN_C_), //SVM_ENA
 };
 
 
@@ -100,6 +98,9 @@ class Brushless
     float t0_; // in us, time to spent on V0 or V7
     float t1_; // in us, time to spent on vx
     float t2_; // in us, time to spent on vy
+    uint16_t OCR1_; // for debug
+    uint16_t OCR2_; //
+    uint16_t OCR3_; //
     volatile static SVM_vector vx_; // the two vectors to modulate with
     volatile static SVM_vector vy_;
 

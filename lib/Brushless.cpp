@@ -117,15 +117,15 @@ uint16_t Brushless::setPosition(float m_param, float angle_raw){
   float t0_half = t0_/2;
 
   float ovrflw = timer.getOverflow();
-  float OCR1 = ovrflw * t0_half / t_;
-  float OCR2 = OCR1 + ovrflw * t1_ / t_;
-  float OCR3 = OCR2 + ovrflw * t2_ / t_;
+  OCR1_ = ovrflw * t0_half / t_;
+  OCR2_ = OCR1_ + ovrflw * t1_ / t_;
+  OCR3_ = OCR2_ + ovrflw * t2_ / t_;
 
-  timer.setCompare(TIMER_CH1, (uint16_t) OCR1);
-  timer.setCompare(TIMER_CH2, (uint16_t) OCR2);
-  timer.setCompare(TIMER_CH3, (uint16_t) OCR3);
+  timer.setCompare(TIMER_CH1, OCR1_);
+  timer.setCompare(TIMER_CH2, OCR2_);
+  timer.setCompare(TIMER_CH3, OCR3_);
 
-  GPIOB->regs->BSRR = SVM_HW_pins[SVM_ENA];
+  GPIOB->regs->BSRR = ENABLE_ALL;
 
   return 0;
 }
@@ -141,8 +141,11 @@ String Brushless::getInfo(){
          //+ dash("t", (int) t_)
          + dash("vx", vx_)
          + dash("vy", vy_)
-         + dash("bin_vx", SVM_HW_pins[vx_])
-         + dash("bin_vy", SVM_HW_pins[vy_])
+         //+ dash("bin_vx", SVM_HW_pins[vx_])
+         //+ dash("bin_vy", SVM_HW_pins[vy_])
+         + dash("OCR1", OCR1_)
+         + dash("OCR2", OCR2_)
+         + dash("OCR3", OCR3_)
          + dash("t0", t0_)
          + dash("t1", t1_)
          + dash("t2", t2_);
@@ -310,8 +313,8 @@ void setOutputStage(SVM_vector vector){
   GPIOB->regs->BRR = SVM_HW_pins[SVM_V7] & (~SVM_HW_pins[vector]);  //reset
 }
 
-void Brushless::handler_pwm3(void) {
-  if(TIMER_DIRECTION)
+void Brushless::handler_pwm1(void) {
+  if(!TIMER_DIRECTION)
     //v0 to vx
     setOutputStage(vx_); // set vx
   else
@@ -320,20 +323,18 @@ void Brushless::handler_pwm3(void) {
 }
 
 void Brushless::handler_pwm2(void) {
-  if(TIMER_DIRECTION)
+  if(!TIMER_DIRECTION)
     //vx to vy
     setOutputStage(vy_);
   else
     //vy to vx
     setOutputStage(vx_);
-
 }
 
-void Brushless::handler_pwm1(void) {
-  if(TIMER_DIRECTION)
+void Brushless::handler_pwm3(void) {
+  if(!TIMER_DIRECTION)
     //vy to v7
     setOutputStage(SVM_V7);
-
   else
     //v7 to vy
     setOutputStage(vy_);

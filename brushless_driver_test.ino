@@ -51,8 +51,8 @@ void loop()
     duty = duty*(1-tp) + tp * avg_adc(PA0, 40)/4096;
     float static angle = 0;
     angle += 0.001;
-    bldc.setPosition(duty,angle);
-    //bldc.setPosition(1,duty*2*PI);
+    //bldc.setPosition(duty,angle);
+    bldc.setPosition(1,duty*2*PI);
 
     //printDash("millis", (int)millis());
     printDash("duty", duty*360);
