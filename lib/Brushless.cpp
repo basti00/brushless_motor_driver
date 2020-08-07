@@ -88,33 +88,48 @@ uint16_t Brushless::setDutycyle(float dutycycle){
 
 uint16_t Brushless::setPosition(float m_param, float angle_raw){
   float angle = fMod(angle_raw, 2*PI);
+  uint8_t sector;
   alpha_ = fMod(angle_raw, PI_THIRD);
   m_ = m_param;
-
   //// todo probably noInterrupt(); needed
   if(angle < PI_THIRD){
     vx_ = SVM_V1;
     vy_ = SVM_V3;
+    sector = 0;
   } else if(angle < 2*PI_THIRD){
     vx_ = SVM_V3;
     vy_ = SVM_V2;
+    sector = 1;
   } else if(angle < 3*PI_THIRD){
     vx_ = SVM_V2;
     vy_ = SVM_V6;
+    sector = 2;
   } else if(angle < 4*PI_THIRD){
     vx_ = SVM_V6;
     vy_ = SVM_V4;
+    sector = 3;
   } else if(angle < 5*PI_THIRD){
     vx_ = SVM_V4;
     vy_ = SVM_V5;
+    sector = 4;
   } else {
     vx_ = SVM_V5;
     vy_ = SVM_V1;
+    sector = 5;
   }
   t1_ = t_ * m_ * sin((PI_THIRD - alpha_));
   t2_ = t_ * m_ * sin(alpha_);
   t0_ = t_ - t1_ - t2_;
   float t0_half = t0_/2;
+
+  if(sector % 2){
+    float temp_t1 = t1_;
+    t1_ = t2_;
+    t2_ = temp_t1;
+    SVM_vector temp_vx = vx_;
+    vx_ = vy_;
+    vy_ = temp_vx;
+  }
 
   float ovrflw = timer.getOverflow();
   OCR1_ = ovrflw * t0_half / t_;
