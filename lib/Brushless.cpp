@@ -21,8 +21,13 @@ uint16_t volatile Brushless::hall_int_num = 0;
 uint8_t volatile Brushless::hall_sektor = 0;
 uint16_t volatile Brushless::hall_rotations = 0;
 uint8_t volatile Brushless::hall_old_sektor = -1;
+
 volatile SVM_vector Brushless::vx_ = SVM_V0;
 volatile SVM_vector Brushless::vy_ = SVM_V0;
+
+volatile SVM_phase Brushless::OCR1_phase = SVM_NONE;
+volatile SVM_phase Brushless::OCR2_phase = SVM_NONE;
+volatile SVM_phase Brushless::OCR3_phase = SVM_NONE;
 
 
 Brushless::Brushless()
@@ -96,26 +101,44 @@ uint16_t Brushless::setPosition(float m_param, float angle_raw){
     vx_ = SVM_V1;
     vy_ = SVM_V3;
     sector = 0;
+    OCR1_phase = SVM_A;
+    OCR2_phase = SVM_B;
+    OCR3_phase = SVM_C;
   } else if(angle < 2*PI_THIRD){
     vx_ = SVM_V3;
     vy_ = SVM_V2;
     sector = 1;
+    OCR1_phase = SVM_B;
+    OCR2_phase = SVM_A;
+    OCR3_phase = SVM_C;
   } else if(angle < 3*PI_THIRD){
     vx_ = SVM_V2;
     vy_ = SVM_V6;
     sector = 2;
+    OCR1_phase = SVM_B;
+    OCR2_phase = SVM_C;
+    OCR3_phase = SVM_A;
   } else if(angle < 4*PI_THIRD){
     vx_ = SVM_V6;
     vy_ = SVM_V4;
     sector = 3;
+    OCR1_phase = SVM_C;
+    OCR2_phase = SVM_B;
+    OCR3_phase = SVM_A;
   } else if(angle < 5*PI_THIRD){
     vx_ = SVM_V4;
     vy_ = SVM_V5;
     sector = 4;
+    OCR1_phase = SVM_C;
+    OCR2_phase = SVM_A;
+    OCR3_phase = SVM_B;
   } else {
     vx_ = SVM_V5;
     vy_ = SVM_V1;
     sector = 5;
+    OCR1_phase = SVM_A;
+    OCR2_phase = SVM_C;
+    OCR3_phase = SVM_B;
   }
   t1_ = t_ * m_ * sin((PI_THIRD - alpha_));
   t2_ = t_ * m_ * sin(alpha_);
@@ -140,7 +163,7 @@ uint16_t Brushless::setPosition(float m_param, float angle_raw){
   timer.setCompare(TIMER_CH2, OCR2_);
   timer.setCompare(TIMER_CH3, OCR3_);
 
-  GPIOB->regs->BSRR = ENABLE_ALL;
+  GPIOB->regs->BSRR = ENABLE_MASK;
 
   return 0;
 }
@@ -266,40 +289,32 @@ float fMod(float a, float b)
   return mod;
 }
 
-/*
- * find difference in these bit-patterns, then check
- * which bits to set or reset.
- */
-void setOutputStage(SVM_vector vector){
-  GPIOB->regs->BSRR = SVM_HW_pins[SVM_V7] & SVM_HW_pins[vector];    //set
-  GPIOB->regs->BRR = SVM_HW_pins[SVM_V7] & (~SVM_HW_pins[vector]);  //reset
+void inline setOutputPhase(SVM_phase phase){
+  GPIOB->regs->BSRR = PHASE_MASK & SVM_phase_pin[phase];
+}
+void inline resetOutputPhase(SVM_phase phase){
+  GPIOB->regs->BRR = PHASE_MASK & SVM_phase_pin[phase];
 }
 
 void Brushless::handler_pwm1(void) {
-  if(!TIMER_DIRECTION)
-    //v0 to vx
-    setOutputStage(vx_); // set vx
+  if(TIMER_DIRECTION)
+    resetOutputPhase(OCR1_phase);
   else
-    //vx to v0
-    setOutputStage(SVM_V0); // set all low
+    setOutputPhase(OCR1_phase);
 }
 
 void Brushless::handler_pwm2(void) {
-  if(!TIMER_DIRECTION)
-    //vx to vy
-    setOutputStage(vy_);
+  if(TIMER_DIRECTION)
+    resetOutputPhase(OCR2_phase);
   else
-    //vy to vx
-    setOutputStage(vx_);
+    setOutputPhase(OCR2_phase);
 }
 
 void Brushless::handler_pwm3(void) {
-  if(!TIMER_DIRECTION)
-    //vy to v7
-    setOutputStage(SVM_V7);
+  if(TIMER_DIRECTION)
+    resetOutputPhase(OCR3_phase);
   else
-    //v7 to vy
-    setOutputStage(vy_);
+    setOutputPhase(OCR3_phase);
 }
 
 void Brushless::handler_overflow(void) {

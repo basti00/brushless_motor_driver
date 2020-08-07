@@ -25,7 +25,22 @@
 #define HAL2 PB13
 #define HAL3 PA9
 
-#define ENABLE_ALL ((1<<EN_A_)|(1<<EN_B_)|(1<<EN_C_))
+#define ENABLE_MASK ((1<<EN_A_)|(1<<EN_B_)|(1<<EN_C_))
+#define PHASE_MASK ((1<<IN_A_)|(1<<IN_B_)|(1<<IN_C_))
+
+typedef enum SVM_phase{
+  SVM_A,
+  SVM_B,
+  SVM_C,
+  SVM_NONE,
+}SVM_phase;
+
+const uint8_t SVM_phase_pin[] = {
+        (1<<IN_A_), //SVM_A,
+        (1<<IN_B_), //SVM_B,
+        (1<<IN_C_),  //SVM_C,
+        0  //SVM_NONE,
+};
 
 typedef enum SVM_vector{
   SVM_V0, // connected to GND
@@ -37,22 +52,6 @@ typedef enum SVM_vector{
   SVM_V5,
   SVM_V7, //connected to VCC
 }SVM_vector;
-
-// using hardcoded pin-configs (todo make dynamic)
-const uint8_t SVM_HW_pins[] = {
-        0,                       //SVM_V0, // connected to GND
-        (1<<IN_A_),              //SVM_V1,
-        (1<<IN_A_) | (1<<IN_B_), //SVM_V3,
-        (1<<IN_B_),              //SVM_V2,
-        (1<<IN_B_) | (1<<IN_C_), //SVM_V6,
-        (1<<IN_C_),              //SVM_V4,
-        (1<<IN_C_) | (1<<IN_A_), //SVM_V5,
-        (1<<IN_A_) | (1<<IN_B_) | (1<<IN_C_), //SVM_V7, //connected to VCC
-};
-
-
-void handler_pwm_low();
-void handler_pwm_high();
 
 String dash(String name, int val);
 String dash(String name, float val);
@@ -92,19 +91,23 @@ class Brushless
     static volatile uint16_t hall_rotations;
     static volatile uint8_t hall_old_sektor;
 
+    // essential
+    volatile static SVM_phase OCR1_phase; // needed by the ISRs, shared ressources todo locking
+    volatile static SVM_phase OCR2_phase;
+    volatile static SVM_phase OCR3_phase;
+
+    // for debug
     float m_;     // 0 - 1
     float alpha_; // angle in sektor in rad
     float t_;  // pwm period in us
     float t0_; // in us, time to spent on V0 or V7
     float t1_; // in us, time to spent on vx
     float t2_; // in us, time to spent on vy
-    uint16_t OCR1_; // for debug
-    uint16_t OCR2_; //
-    uint16_t OCR3_; //
-    volatile static SVM_vector vx_; // the two vectors to modulate with
+    uint16_t OCR1_; // timer overflow values
+    uint16_t OCR2_;
+    uint16_t OCR3_;
+    volatile static SVM_vector vx_; // redundant! the two vectors to modulate with
     volatile static SVM_vector vy_;
-
-
 };
 
 

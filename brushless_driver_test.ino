@@ -41,18 +41,13 @@ void loop()
   if(millis() >= time_now + PERIOD){
     time_now += PERIOD;
 
-/*    bldc.setPosition(1,0);
-    Serial.print(bldc.getInfo());
-    Serial.println();
-    return;*/
-
     float static duty = 0;
     float tp = 0.05;
     duty = duty*(1-tp) + tp * avg_adc(PA0, 40)/4096;
     float static angle = 0;
-    angle += 0.01;
+    angle += 0.008;
     bldc.setPosition(duty,angle);
-    //bldc.setPosition(1,duty*2*PI);
+    //bldc.setPosition(0.6,duty*4*PI);
 
     //printDash("millis", (int)millis());
     printDash("duty", duty*360);
