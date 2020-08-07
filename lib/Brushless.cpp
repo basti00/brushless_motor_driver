@@ -21,8 +21,8 @@ uint16_t volatile Brushless::hall_int_num = 0;
 uint8_t volatile Brushless::hall_sektor = 0;
 uint16_t volatile Brushless::hall_rotations = 0;
 uint8_t volatile Brushless::hall_old_sektor = -1;
-volatile SVM_vector Brushless::vx_ = SVM_V8;
-volatile SVM_vector Brushless::vy_ = SVM_V8;
+volatile SVM_vector Brushless::vx_ = SVM_V0;
+volatile SVM_vector Brushless::vy_ = SVM_V0;
 
 
 Brushless::Brushless()
@@ -34,15 +34,15 @@ Brushless::Brushless()
   pinMode(PB0, OUTPUT);
 
   // Output
-  pinMode(IN1, OUTPUT);
-  pinMode(IN2, OUTPUT);
-  pinMode(IN3, OUTPUT);
-  pinMode(EN1, OUTPUT);
-  pinMode(EN2, OUTPUT);
-  pinMode(EN3, OUTPUT);
-  digitalWrite(EN1, 0);
-  digitalWrite(EN2, 0);
-  digitalWrite(EN3, 0);
+  pinMode(INA, OUTPUT);
+  pinMode(INB, OUTPUT);
+  pinMode(INC, OUTPUT);
+  pinMode(ENA, OUTPUT);
+  pinMode(ENB, OUTPUT);
+  pinMode(ENC, OUTPUT);
+  digitalWrite(ENA, 0);
+  digitalWrite(ENB, 0);
+  digitalWrite(ENC, 0);
 
   // Input
   pinMode(HAL1, INPUT_PULLUP);
@@ -86,24 +86,25 @@ uint16_t Brushless::setDutycyle(float dutycycle){
   return comp;
 }
 
-uint16_t Brushless::setPosition(float m_param, float angle){
-  alpha_ = fMod(angle, PI_THIRD);
+uint16_t Brushless::setPosition(float m_param, float angle_raw){
+  float angle = fMod(angle_raw, 2*PI);
+  alpha_ = fMod(angle_raw, PI_THIRD);
   m_ = m_param;
 
   //// todo probably noInterrupt(); needed
-  if(alpha_ < PI_THIRD){
+  if(angle < PI_THIRD){
     vx_ = SVM_V1;
     vy_ = SVM_V3;
-  } else if(alpha_ < 2*PI_THIRD){
+  } else if(angle < 2*PI_THIRD){
     vx_ = SVM_V3;
     vy_ = SVM_V2;
-  } else if(alpha_ < 3*PI_THIRD){
+  } else if(angle < 3*PI_THIRD){
     vx_ = SVM_V2;
     vy_ = SVM_V6;
-  } else if(alpha_ < 4*PI_THIRD){
+  } else if(angle < 4*PI_THIRD){
     vx_ = SVM_V6;
     vy_ = SVM_V4;
-  } else if(alpha_ < 5*PI_THIRD){
+  } else if(angle < 5*PI_THIRD){
     vx_ = SVM_V4;
     vy_ = SVM_V5;
   } else {
@@ -123,6 +124,9 @@ uint16_t Brushless::setPosition(float m_param, float angle){
   timer.setCompare(TIMER_CH1, (uint16_t) OCR1);
   timer.setCompare(TIMER_CH2, (uint16_t) OCR2);
   timer.setCompare(TIMER_CH3, (uint16_t) OCR3);
+
+  GPIOB->regs->BSRR = SVM_HW_pins[SVM_ENA];
+
   return 0;
 }
 
@@ -134,16 +138,18 @@ String Brushless::getInfo(){
   return ""
          + dash("m",m_)
          + dash("alpha",alpha_)
-         + dash("t", (int) t_)
+         //+ dash("t", (int) t_)
          + dash("vx", vx_)
          + dash("vy", vy_)
+         + dash("bin_vx", SVM_HW_pins[vx_])
+         + dash("bin_vy", SVM_HW_pins[vy_])
          + dash("t0", t0_)
          + dash("t1", t1_)
          + dash("t2", t2_);
 }
 
 
-volatile int pwm_pin = IN1;
+volatile int pwm_pin = INA;
 volatile uint8_t pwm_st = 0;
 
 void Brushless::handler_sections(void) {
@@ -154,32 +160,32 @@ void Brushless::handler_sections(void) {
   switch(st){
     case 0:
       // IN1 low
-      pwm_pin = IN2_;
+      pwm_pin = IN_B_;
       GPIOB->regs->BSRR =  0b0000000101000000 | (pwm_st << pwm_pin);
       break;
     case 1:
       // IN3 low
-      pwm_pin = IN2_;
+      pwm_pin = IN_B_;
       GPIOB->regs->BSRR =  0b0000000001010000 | (pwm_st << pwm_pin);
       break;
     case 2:
       // IN3 low
-      pwm_pin = IN1_;
+      pwm_pin = IN_A_;
       GPIOB->regs->BSRR =  0b0000000100010000 | (pwm_st << pwm_pin);
       break;
     case 3:
       // IN2 low
-      pwm_pin = IN1_;
+      pwm_pin = IN_A_;
       GPIOB->regs->BSRR =  0b0000000101000000 | (pwm_st << pwm_pin);
       break;
     case 4:
       // IN2 low
-      pwm_pin = IN3_;
+      pwm_pin = IN_C_;
       GPIOB->regs->BSRR =  0b0000000001010000 | (pwm_st << pwm_pin);
       break;
     case 5:
       // IN1 low
-      pwm_pin = IN3_;
+      pwm_pin = IN_C_;
       GPIOB->regs->BSRR =  0b0000000100010000 | (pwm_st << pwm_pin);
       break;
   }
@@ -295,30 +301,47 @@ float fMod(float a, float b)
   return mod;
 }
 
-void Brushless::handler_pwm1(void) {
-  if(TIMER_DIRECTION)
-    GPIOC->regs->BRR = 0b0100000000000000;
-  else
-    GPIOC->regs->BSRR = 0b0100000000000000;
-}
-
-void Brushless::handler_pwm2(void) {
-  if(TIMER_DIRECTION)
-    GPIOC->regs->BRR = 0b0010000000000000;
-  else
-    GPIOC->regs->BSRR = 0b0010000000000000;
+/*
+ * find difference in these bit-patterns, then check
+ * which bits to set or reset.
+ */
+void setOutputStage(SVM_vector vector){
+  GPIOB->regs->BSRR = SVM_HW_pins[SVM_V7] & SVM_HW_pins[vector];    //set
+  GPIOB->regs->BRR = SVM_HW_pins[SVM_V7] & (~SVM_HW_pins[vector]);  //reset
 }
 
 void Brushless::handler_pwm3(void) {
   if(TIMER_DIRECTION)
-    GPIOB->regs->BRR = 0b0000000000000001;
+    //v0 to vx
+    setOutputStage(vx_); // set vx
   else
-    GPIOB->regs->BSRR = 0b0000000000000001;
+    //vx to v0
+    setOutputStage(SVM_V0); // set all low
+}
+
+void Brushless::handler_pwm2(void) {
+  if(TIMER_DIRECTION)
+    //vx to vy
+    setOutputStage(vy_);
+  else
+    //vy to vx
+    setOutputStage(vx_);
+
+}
+
+void Brushless::handler_pwm1(void) {
+  if(TIMER_DIRECTION)
+    //vy to v7
+    setOutputStage(SVM_V7);
+
+  else
+    //v7 to vy
+    setOutputStage(vy_);
 }
 
 void Brushless::handler_overflow(void) {
   if(TIMER_DIRECTION)
-    GPIOC->regs->BRR = 0b1000000000000000;
+    GPIOB->regs->BRR = 0b0000000000000001;
   else
-    GPIOC->regs->BSRR = 0b1000000000000000;
+    GPIOB->regs->BSRR = 0b0000000000000001;
 }

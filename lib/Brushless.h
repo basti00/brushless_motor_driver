@@ -8,32 +8,49 @@
 #include "Arduino.h"
 
 //pin definition
-#define EN1 PB8
-#define EN2 PB6
-#define EN3 PB4
-#define IN1 PB7
-#define IN2 PB5
-#define IN3 PB3
-#define IN1_ 7
-#define IN2_ 5
-#define IN3_ 3
+#define ENA PB8
+#define ENB PB6
+#define ENC PB4
+#define INA PB7
+#define INB PB5
+#define INC PB3
+#define EN_A_ 8
+#define EN_B_ 6
+#define EN_C_ 4
+#define IN_A_ 7
+#define IN_B_ 5
+#define IN_C_ 3
 
 #define HAL1 PA8
 #define HAL2 PB13
 #define HAL3 PA9
 
+#define ENABLE_ALL ((1<<EN_A_)|(1<<EN_B_)|(1<<EN_C_))
 
 typedef enum SVM_vector{
   SVM_V0, // connected to GND
   SVM_V1,
-  SVM_V2,
   SVM_V3,
+  SVM_V2,
+  SVM_V6,
   SVM_V4,
   SVM_V5,
-  SVM_V6,
   SVM_V7, //connected to VCC
-  SVM_V8  //disabled
+  SVM_ENA  //enable all
 }SVM_vector;
+
+// using hardcoded pin-configs (todo make dynamic)
+const uint16_t SVM_HW_pins[] = {
+        0,                       //SVM_V0, // connected to GND
+        (1<<IN_A_),              //SVM_V1,
+        (1<<IN_A_) | (1<<IN_B_), //SVM_V3,
+        (1<<IN_B_),              //SVM_V2,
+        (1<<IN_B_) | (1<<IN_C_), //SVM_V6,
+        (1<<IN_C_),              //SVM_V4,
+        (1<<IN_C_) | (1<<IN_A_), //SVM_V5,
+        (1<<IN_A_) | (1<<IN_B_) | (1<<IN_C_), //SVM_V7, //connected to VCC
+        (1<<EN_A_) | (1<<EN_B_) | (1<<EN_C_), //SVM_ENA
+};
 
 
 void handler_pwm_low();
