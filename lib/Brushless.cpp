@@ -138,62 +138,23 @@ String Brushless::getInfo(){
   return ""
          + dash("m",m_)
          + dash("alpha",alpha_)
+
          //+ dash("t", (int) t_)
          + dash("vx", vx_)
-         + dash("vy", vy_)
+         + dash("vy", vy_) //*/
          //+ dash("bin_vx", SVM_HW_pins[vx_])
          //+ dash("bin_vy", SVM_HW_pins[vy_])
+         /*
          + dash("OCR1", OCR1_)
          + dash("OCR2", OCR2_)
-         + dash("OCR3", OCR3_)
+         + dash("OCR3", OCR3_) //*/
+
          + dash("t0", t0_)
          + dash("t1", t1_)
-         + dash("t2", t2_);
+         + dash("t2", t2_)// */
+  ;
 }
 
-
-volatile int pwm_pin = INA;
-volatile uint8_t pwm_st = 0;
-
-void Brushless::handler_sections(void) {
-  //digitalWrite(PC13, st & 0x01);
-  noInterrupts();
-  st = (hall_sektor+1)%6;
-  GPIOB->regs->BRR =  0b0000000111111000; //disable all
-  switch(st){
-    case 0:
-      // IN1 low
-      pwm_pin = IN_B_;
-      GPIOB->regs->BSRR =  0b0000000101000000 | (pwm_st << pwm_pin);
-      break;
-    case 1:
-      // IN3 low
-      pwm_pin = IN_B_;
-      GPIOB->regs->BSRR =  0b0000000001010000 | (pwm_st << pwm_pin);
-      break;
-    case 2:
-      // IN3 low
-      pwm_pin = IN_A_;
-      GPIOB->regs->BSRR =  0b0000000100010000 | (pwm_st << pwm_pin);
-      break;
-    case 3:
-      // IN2 low
-      pwm_pin = IN_A_;
-      GPIOB->regs->BSRR =  0b0000000101000000 | (pwm_st << pwm_pin);
-      break;
-    case 4:
-      // IN2 low
-      pwm_pin = IN_C_;
-      GPIOB->regs->BSRR =  0b0000000001010000 | (pwm_st << pwm_pin);
-      break;
-    case 5:
-      // IN1 low
-      pwm_pin = IN_C_;
-      GPIOB->regs->BSRR =  0b0000000100010000 | (pwm_st << pwm_pin);
-      break;
-  }
-  interrupts();
-}
 
 void Brushless::calc_rotation(){
   hall_int_num++;
@@ -229,7 +190,7 @@ void Brushless::calc_rotation(){
     }
   }
   if(hall_sektor != hall_old_sektor){
-    handler_sections();  //// advancing commutation sector
+    //handler_sections();  //// advancing commutation sector
 
     if(hall_sektor==0 && hall_old_sektor==5)
       hall_rotations++;
@@ -264,20 +225,6 @@ void Brushless::Hall3_ISR()
   calc_rotation();
 }
 
-
-void Brushless::handler_pwm_low() {
-  //Clear C13 (LOW)
-  GPIOB->regs->BRR = 1<<pwm_pin; //lower 16 bits
-  GPIOC->regs->BRR = 0b0010000000000000; //PC13
-  pwm_st = 1;
-}
-
-void Brushless::handler_pwm_high() {
-  //Set C13 (HIGH)
-  GPIOB->regs->BSRR = 1<<pwm_pin; //lower 16 bits
-  GPIOC->regs->BSRR = 0b0010000000000000; //PC13
-  pwm_st = 0;
-}
 
 String dash(String name, int val){
   return (name + " " + String(val) + "\t");
