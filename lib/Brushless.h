@@ -35,7 +35,7 @@ typedef enum SVM_phase{
   SVM_NONE,
 }SVM_phase;
 
-const uint8_t SVM_phase_pin[] = {
+const uint16_t SVM_phase_pin[] = {
         (1<<IN_A_), //SVM_A,
         (1<<IN_B_), //SVM_B,
         (1<<IN_C_),  //SVM_C,
@@ -62,9 +62,10 @@ class Brushless
 {
   public:
     Brushless();
-    void setupPWMTimer(uint32_t f);
+    void setupPWMTimer();
     uint16_t setDutycyle(float dutycycle);
-    uint16_t setPosition(float m, float angle);
+    static uint16_t setPosition(float m, float angle);
+    uint16_t setRPS(float rps);
     String getInfo();
     inline int hz_to_us(int f) { return 1000000/f; }
 
@@ -78,8 +79,8 @@ class Brushless
     static void handler_pwm2();
     static void handler_pwm3();
     static void handler_overflow();
-    static void handler_pwm_low();
-    static void handler_pwm_high();
+
+    static void handler_control();
 
 
   private:
@@ -96,16 +97,20 @@ class Brushless
     volatile static SVM_phase OCR2_phase;
     volatile static SVM_phase OCR3_phase;
 
+    volatile static uint16_t control_freq_;
+    volatile static float set_rps_;
+    volatile static float phi; //angle of pwm vector 0 .. 2*pi
+
     // for debug
-    float m_;     // 0 - 1
-    float alpha_; // angle in sektor in rad
-    float t_;  // pwm period in us
-    float t0_; // in us, time to spent on V0 or V7
-    float t1_; // in us, time to spent on vx
-    float t2_; // in us, time to spent on vy
-    uint16_t OCR1_; // timer overflow values
-    uint16_t OCR2_;
-    uint16_t OCR3_;
+    static float m_;     // 0 - 1
+    static float alpha_; // angle in sektor in rad
+    static float t_;  // pwm period in us
+    static float t0_; // in us, time to spent on V0 or V7
+    static float t1_; // in us, time to spent on vx
+    static float t2_; // in us, time to spent on vy
+    static uint16_t OCR1_; // timer overflow values
+    static uint16_t OCR2_;
+    static uint16_t OCR3_;
     volatile static SVM_vector vx_; // redundant! the two vectors to modulate with
     volatile static SVM_vector vy_;
 };

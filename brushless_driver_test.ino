@@ -6,7 +6,7 @@
 Brushless bldc;
 
 void setup() {
-  bldc.setupPWMTimer(10000);
+  bldc.setupPWMTimer();
   pinMode(PC13, OUTPUT);
   Serial.begin(115200);
   delay(1);
@@ -31,29 +31,32 @@ int avg_adc(int pin, int n){
   return sum/n;
 }
 
+float deg = 6*PI/180;
 
 void loop()
 {
   int static loops = 0;
-  unsigned long static time_now = 0;
+  unsigned long static time_now = millis();
   loops++;
 
   if(millis() >= time_now + PERIOD){
     time_now += PERIOD;
 
-    float static duty = 0;
+    float static poti = 0;
     float tp = 0.05;
-    duty = duty*(1-tp) + tp * avg_adc(PA0, 40)/4096;
-    float static angle = 0;
-    angle += 0.008;
-    bldc.setPosition(duty,angle);
-    //bldc.setPosition(0.6,duty*4*PI);
+    poti = poti*(1-tp) + tp * avg_adc(PA0, 40)/4096; // 0..1
+    //float static angle = 0;
+    //angle += (6*PI/180) * duty;
+
+    bldc.setRPS(poti*poti * 100);
+    //bldc.setPosition(0.8,angle);
+    //bldc.setPosition(duty,angle);
+    //bldc.setPosition(0.8,duty*3*PI); // one and a half rotation
 
     //printDash("millis", (int)millis());
-    printDash("duty", duty*360);
+    printDash("poti", poti);
     //printDash("Comp_value", comp_value);
-    Serial.print(bldc.getInfo());
-    loops = 0;
+    //Serial.print(bldc.getInfo());
 
     Serial.println();
   }

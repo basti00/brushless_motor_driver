@@ -5,9 +5,10 @@
 #include "Arduino.h"
 #include "Brushless.h"
 
-HardwareTimer timer(2);
+HardwareTimer phase_pwm_timer(2);
+HardwareTimer control_timer(3);
 
-// check if timer is counting up or down
+// check if timer is counting up or do wn
 #define TIMER_DIRECTION ((TIMER2->regs).bas->CR1 & 1<<4)
 #define HZ_TO_US(f) (1000000/f)
 #define PI_THIRD 1.04719755f
@@ -28,6 +29,22 @@ volatile SVM_vector Brushless::vy_ = SVM_V0;
 volatile SVM_phase Brushless::OCR1_phase = SVM_NONE;
 volatile SVM_phase Brushless::OCR2_phase = SVM_NONE;
 volatile SVM_phase Brushless::OCR3_phase = SVM_NONE;
+
+float Brushless::m_=0;
+float Brushless::alpha_=0;
+float Brushless::t_=0;
+float Brushless::t0_=0;
+float Brushless::t1_=0;
+float Brushless::t2_=0;
+uint16_t Brushless::OCR1_=0;
+uint16_t Brushless::OCR2_=0;
+uint16_t Brushless::OCR3_=0;
+
+volatile uint16_t Brushless::control_freq_ = 0;
+volatile float Brushless::set_rps_ = 0;
+volatile float Brushless::phi = 0;
+
+
 
 
 Brushless::Brushless()
@@ -58,37 +75,56 @@ Brushless::Brushless()
   attachInterrupt(digitalPinToInterrupt(HAL3), Hall3_ISR, CHANGE);
 }
 
-void Brushless::setupPWMTimer(uint32_t f){
+void Brushless::setupPWMTimer(){
   // Pause the timer while we're configuring it
-  timer.pause();
-  t_ = HZ_TO_US(f);
-  timer.setPeriod(HZ_TO_US(f));
-  timer.setMode(1, TIMER_OUTPUT_COMPARE);
-  timer.setMode(2, TIMER_OUTPUT_COMPARE);
-  timer.setMode(3, TIMER_OUTPUT_COMPARE);
-  timer.setCompare(TIMER_CH1, timer.getOverflow());
-  timer.setCompare(TIMER_CH2, timer.getOverflow());
-  timer.setCompare(TIMER_CH3, timer.getOverflow());
+
+  // PWM-MODUL timer
+  phase_pwm_timer.pause();
+  t_ = HZ_TO_US(20000);
+  phase_pwm_timer.setPeriod(t_);
+  phase_pwm_timer.setMode(1, TIMER_OUTPUT_COMPARE);
+  phase_pwm_timer.setMode(2, TIMER_OUTPUT_COMPARE);
+  phase_pwm_timer.setMode(3, TIMER_OUTPUT_COMPARE);
+  phase_pwm_timer.setCompare(TIMER_CH1, phase_pwm_timer.getOverflow());
+  phase_pwm_timer.setCompare(TIMER_CH2, phase_pwm_timer.getOverflow());
+  phase_pwm_timer.setCompare(TIMER_CH3, phase_pwm_timer.getOverflow());
   (TIMER2->regs).bas->CR1 |= 0b11<<5; //Set to center aligned mode, generate INT at up & down part
-  timer.attachInterrupt(1, handler_pwm1);
-  timer.attachInterrupt(2, handler_pwm2);
-  timer.attachInterrupt(3, handler_pwm3);
-  timer.attachInterrupt(0, handler_overflow);
+  phase_pwm_timer.attachInterrupt(1, handler_pwm1);
+  phase_pwm_timer.attachInterrupt(2, handler_pwm2);
+  phase_pwm_timer.attachInterrupt(3, handler_pwm3);
+  phase_pwm_timer.attachInterrupt(0, handler_overflow);
   //to disable jitter due to systick interrupts, delay() does not work though
   //systick_disable();
   //alternatively you could set interrupt priority
   nvic_irq_set_priority(NVIC_TIMER2, 0);     //highest priority for Timer2
-  timer.refresh();
-  timer.resume();
+
+  phase_pwm_timer.refresh();
+  phase_pwm_timer.resume();
+
+  // control timer
+  control_timer.pause();
+  control_freq_ = 1000;
+  control_timer.setPeriod(HZ_TO_US(control_freq_));
+  control_timer.attachInterrupt(0, handler_control);
+
+  control_timer.refresh();
+  control_timer.resume();
 }
 
 uint16_t Brushless::setDutycyle(float dutycycle){
-  int comp = (timer.getOverflow()*dutycycle)/100;
-  timer.setCompare(TIMER_CH1, comp);
-  timer.setCompare(TIMER_CH2, comp/2);
-  timer.setCompare(TIMER_CH3, comp/3);
+  /*int comp = (phase_pwm_timer.getOverflow()*dutycycle)/100;
+  phase_pwm_timer.setCompare(TIMER_CH1, comp);
+  phase_pwm_timer.setCompare(TIMER_CH2, comp/2);
+  phase_pwm_timer.setCompare(TIMER_CH3, comp/3);
   Serial.print(comp);
-  return comp;
+  return comp;*/
+}
+
+uint16_t Brushless::setRPS(float rps)
+{
+  noInterrupts();
+  set_rps_ = rps;
+  interrupts();
 }
 
 uint16_t Brushless::setPosition(float m_param, float angle_raw){
@@ -154,14 +190,14 @@ uint16_t Brushless::setPosition(float m_param, float angle_raw){
     vy_ = temp_vx;
   }
 
-  float ovrflw = timer.getOverflow();
+  float ovrflw = phase_pwm_timer.getOverflow();
   OCR1_ = ovrflw * t0_half / t_;
   OCR2_ = OCR1_ + ovrflw * t1_ / t_;
   OCR3_ = OCR2_ + ovrflw * t2_ / t_;
 
-  timer.setCompare(TIMER_CH1, OCR1_);
-  timer.setCompare(TIMER_CH2, OCR2_);
-  timer.setCompare(TIMER_CH3, OCR3_);
+  phase_pwm_timer.setCompare(TIMER_CH1, OCR1_);
+  phase_pwm_timer.setCompare(TIMER_CH2, OCR2_);
+  phase_pwm_timer.setCompare(TIMER_CH3, OCR3_);
 
   GPIOB->regs->BSRR = ENABLE_MASK;
 
@@ -290,10 +326,10 @@ float fMod(float a, float b)
 }
 
 void inline setOutputPhase(SVM_phase phase){
-  GPIOB->regs->BSRR = PHASE_MASK & SVM_phase_pin[phase];
+  GPIOB->regs->BSRR = /*PHASE_MASK & */SVM_phase_pin[phase];
 }
 void inline resetOutputPhase(SVM_phase phase){
-  GPIOB->regs->BRR = PHASE_MASK & SVM_phase_pin[phase];
+  GPIOB->regs->BRR = /*PHASE_MASK & */SVM_phase_pin[phase];
 }
 
 void Brushless::handler_pwm1(void) {
@@ -318,8 +354,26 @@ void Brushless::handler_pwm3(void) {
 }
 
 void Brushless::handler_overflow(void) {
-  if(TIMER_DIRECTION)
+  /*if(TIMER_DIRECTION)
+    GPIOB->regs->BRR = 0b0000000000000001;
+  else
+    GPIOB->regs->BSRR = 0b0000000000000001; //*/
+
+}
+
+/*
+ * 1000Hz = 1ms period
+ */
+void Brushless::handler_control(void) {
+
+  bool static tog = 0;
+  tog = !tog;
+  if(tog)
     GPIOB->regs->BRR = 0b0000000000000001;
   else
     GPIOB->regs->BSRR = 0b0000000000000001;
+
+  phi += (TWO_PI * set_rps_ / control_freq_);
+  phi = fMod(phi, TWO_PI);
+  setPosition(0.85, phi);
 }
