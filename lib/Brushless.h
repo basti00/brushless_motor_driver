@@ -22,8 +22,8 @@
 #define IN_C_ 3
 
 #define HAL1 PA8
-#define HAL2 PB13
-#define HAL3 PA9
+#define HAL3 PB13
+#define HAL2 PA9
 
 #define ENABLE_MASK ((1<<EN_A_)|(1<<EN_B_)|(1<<EN_C_))
 #define PHASE_MASK ((1<<IN_A_)|(1<<IN_B_)|(1<<IN_C_))
@@ -53,9 +53,17 @@ typedef enum SVM_vector{
   SVM_V7, //connected to VCC
 }SVM_vector;
 
+
+String dash(String name, uint32_t val);
+String dash(String name, uint16_t val);
+String dash(String name, uint8_t val);
+String dash(String name, int32_t val);
+String dash(String name, int16_t val);
+String dash(String name, int8_t val);
 String dash(String name, int val);
 String dash(String name, float val);
 String dash(String name, String val);
+
 float fMod(float a, float b);
 
 class Brushless
@@ -64,12 +72,15 @@ class Brushless
     Brushless();
     void setupPWMTimer();
     uint16_t setDutycyle(float dutycycle);
-    static uint16_t setPosition(float m, float angle);
+    static void setModulation(float m);
+    static uint16_t setPosition(float angle);
     uint16_t setRPS(float rps);
     String getInfo();
     inline int hz_to_us(int f) { return 1000000/f; }
 
-    static void calc_rotation();
+    static float getHallAngle();
+    static uint8_t resolveSektor();
+    static void proc_hall();
     static void Hall1_ISR();
     static void Hall2_ISR();
     static void Hall3_ISR();
@@ -81,6 +92,7 @@ class Brushless
     static void handler_overflow();
 
     static void handler_control();
+    static void handler_hall_timer();
 
 
   private:
@@ -92,6 +104,10 @@ class Brushless
     static volatile uint16_t hall_rotations;
     static volatile uint8_t hall_old_sektor;
 
+    static volatile int8_t hall_direction;
+    static volatile uint8_t hall_timer_ovrflws;
+    static volatile uint32_t hall_timer_predicted_ticks;
+
     // essential
     volatile static SVM_phase OCR1_phase; // needed by the ISRs, shared ressources todo locking
     volatile static SVM_phase OCR2_phase;
@@ -102,12 +118,13 @@ class Brushless
     volatile static float phi; //angle of pwm vector 0 .. 2*pi
 
     // for debug
-    static float m_;     // 0 - 1
-    static float alpha_; // angle in sektor in rad
-    static float t_;  // pwm period in us
-    static float t0_; // in us, time to spent on V0 or V7
-    static float t1_; // in us, time to spent on vx
-    static float t2_; // in us, time to spent on vy
+    static float m_;     // modulation value 0 .. 1
+    static float phi_;   // angle of pwm vector in rad 0 .. 2pi
+    static float alpha_; // angle of pwm vector in sektor in rad
+    static float t_;     // pwm period in us
+    static float t0_;    // in us, time to spent on V0 or V7
+    static float t1_;    // in us, time to spent on vx
+    static float t2_;    // in us, time to spent on vy
     static uint16_t OCR1_; // timer overflow values
     static uint16_t OCR2_;
     static uint16_t OCR3_;

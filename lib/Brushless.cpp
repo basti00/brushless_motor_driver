@@ -7,6 +7,7 @@
 
 HardwareTimer phase_pwm_timer(2);
 HardwareTimer control_timer(3);
+HardwareTimer hall_timer(4);
 
 // check if timer is counting up or do wn
 #define TIMER_DIRECTION ((TIMER2->regs).bas->CR1 & 1<<4)
@@ -23,6 +24,10 @@ uint8_t volatile Brushless::hall_sektor = 0;
 uint16_t volatile Brushless::hall_rotations = 0;
 uint8_t volatile Brushless::hall_old_sektor = -1;
 
+int8_t volatile Brushless::hall_direction = 0;
+uint8_t volatile Brushless::hall_timer_ovrflws = 0;
+uint32_t volatile Brushless::hall_timer_predicted_ticks = 0;
+
 volatile SVM_vector Brushless::vx_ = SVM_V0;
 volatile SVM_vector Brushless::vy_ = SVM_V0;
 
@@ -31,6 +36,7 @@ volatile SVM_phase Brushless::OCR2_phase = SVM_NONE;
 volatile SVM_phase Brushless::OCR3_phase = SVM_NONE;
 
 float Brushless::m_=0;
+float Brushless::phi_=0;
 float Brushless::alpha_=0;
 float Brushless::t_=0;
 float Brushless::t0_=0;
@@ -42,9 +48,6 @@ uint16_t Brushless::OCR3_=0;
 
 volatile uint16_t Brushless::control_freq_ = 0;
 volatile float Brushless::set_rps_ = 0;
-volatile float Brushless::phi = 0;
-
-
 
 
 Brushless::Brushless()
@@ -109,6 +112,15 @@ void Brushless::setupPWMTimer(){
 
   control_timer.refresh();
   control_timer.resume();
+
+  // hall timer
+  hall_timer.pause();
+  hall_timer.setPrescaleFactor(64);
+  hall_timer.setOverflow(65535);
+  hall_timer.attachInterrupt(0, handler_hall_timer);
+
+  hall_timer.refresh();
+  hall_timer.resume();
 }
 
 uint16_t Brushless::setDutycyle(float dutycycle){
@@ -127,41 +139,44 @@ uint16_t Brushless::setRPS(float rps)
   interrupts();
 }
 
-uint16_t Brushless::setPosition(float m_param, float angle_raw){
-  float angle = fMod(angle_raw, 2*PI);
+void Brushless::setModulation(float m_param){
+  m_ = m_param;
+}
+
+uint16_t Brushless::setPosition(float angle_raw){
+  phi_ = fMod(angle_raw, TWO_PI);
   uint8_t sector;
   alpha_ = fMod(angle_raw, PI_THIRD);
-  m_ = m_param;
   //// todo probably noInterrupt(); needed
-  if(angle < PI_THIRD){
+  if(phi_ < PI_THIRD){
     vx_ = SVM_V1;
     vy_ = SVM_V3;
     sector = 0;
     OCR1_phase = SVM_A;
     OCR2_phase = SVM_B;
     OCR3_phase = SVM_C;
-  } else if(angle < 2*PI_THIRD){
+  } else if(phi_ < 2*PI_THIRD){
     vx_ = SVM_V3;
     vy_ = SVM_V2;
     sector = 1;
     OCR1_phase = SVM_B;
     OCR2_phase = SVM_A;
     OCR3_phase = SVM_C;
-  } else if(angle < 3*PI_THIRD){
+  } else if(phi_ < 3*PI_THIRD){
     vx_ = SVM_V2;
     vy_ = SVM_V6;
     sector = 2;
     OCR1_phase = SVM_B;
     OCR2_phase = SVM_C;
     OCR3_phase = SVM_A;
-  } else if(angle < 4*PI_THIRD){
+  } else if(phi_ < 4*PI_THIRD){
     vx_ = SVM_V6;
     vy_ = SVM_V4;
     sector = 3;
     OCR1_phase = SVM_C;
     OCR2_phase = SVM_B;
     OCR3_phase = SVM_A;
-  } else if(angle < 5*PI_THIRD){
+  } else if(phi_ < 5*PI_THIRD){
     vx_ = SVM_V4;
     vy_ = SVM_V5;
     sector = 4;
@@ -204,74 +219,59 @@ uint16_t Brushless::setPosition(float m_param, float angle_raw){
   return 0;
 }
 
-#define ERR 10
-
-int st = 0;
-
-String Brushless::getInfo(){
-  return ""
-         + dash("m",m_)
-         + dash("alpha",alpha_)
-
-         //+ dash("t", (int) t_)
-         + dash("vx", vx_)
-         + dash("vy", vy_) //*/
-         //+ dash("bin_vx", SVM_HW_pins[vx_])
-         //+ dash("bin_vy", SVM_HW_pins[vy_])
-         /*
-         + dash("OCR1", OCR1_)
-         + dash("OCR2", OCR2_)
-         + dash("OCR3", OCR3_) //*/
-
-         + dash("t0", t0_)
-         + dash("t1", t1_)
-         + dash("t2", t2_)// */
-  ;
+uint8_t Brushless::resolveSektor(){
+  if(hall_sektor==1) return 0;
+  if(hall_sektor==3) return 1;
+  if(hall_sektor==2) return 2;
+  if(hall_sektor==6) return 3;
+  if(hall_sektor==4) return 4;
+  if(hall_sektor==5) return 5;
 }
 
+float Brushless::getHallAngle(){
+  uint8_t discrete_sector = resolveSektor();
+  if(hall_timer_predicted_ticks == 0)
+    return PI_THIRD * resolveSektor();
+  float predicted_progeress = (((uint32_t)hall_timer_ovrflws-1)*65536
+                 + hall_timer.getCount()) / (float)hall_timer_predicted_ticks; // 0..1
+  if(predicted_progeress>1)
+    predicted_progeress = 1;
+  if(discrete_sector==0 && hall_direction==-1)
+    discrete_sector = 6;
+  return PI_THIRD * (discrete_sector + predicted_progeress * hall_direction);
+}
 
-void Brushless::calc_rotation(){
+void Brushless::proc_hall(){
   hall_int_num++;
-  if(hall1){
-    if(hall2){
-      if(hall3) //111
-      {
-        hall_sektor = ERR;
-        return;
-      }
-      else //110
-        hall_sektor = 2;
-    }else{
-      if(hall3) //101
-        hall_sektor = 4;
-      else // 100
-        hall_sektor = 3;
-    }
-  }else{
-    if(hall2){
-      if(hall3) //011
-        hall_sektor = 0;
-      else //010
-        hall_sektor = 1;
-    }else{
-      if(hall3) //001
-        hall_sektor = 5;
-      else // 000
-      {
-        hall_sektor = ERR+1;
-        return;
-      }
-    }
+  hall_sektor = (hall3<<2) |(hall2<<1) |(hall1);
+  if(hall_sektor == 0b111 || hall_sektor == 0b000){
+    hall_sektor = -1;
+    return;
   }
   if(hall_sektor != hall_old_sektor){
     //handler_sections();  //// advancing commutation sector
+    hall_timer.pause();
+    hall_timer_predicted_ticks = (hall_timer_ovrflws-1)*65536 + hall_timer.getCount();
+    hall_timer.setCount(0);
+    hall_timer_ovrflws = 0;
+    hall_timer.refresh();
+    hall_timer.resume();
 
-    if(hall_sektor==0 && hall_old_sektor==5)
+    hall_direction = -1;
+    if((hall_old_sektor == 1 && hall_sektor == 3) ||
+               (hall_old_sektor == 3 && hall_sektor == 2) ||
+               (hall_old_sektor == 2 && hall_sektor == 6) ||
+               (hall_old_sektor == 6 && hall_sektor == 4) ||
+               (hall_old_sektor == 4 && hall_sektor == 5) ||
+               (hall_old_sektor == 5 && hall_sektor == 1))
+      hall_direction = 1;
+
+    if(hall_sektor==1 && hall_old_sektor==5)
       hall_rotations++;
-    if(hall_sektor==5 && hall_old_sektor==0)
+    if(hall_sektor==5 && hall_old_sektor==1)
       hall_rotations--;
+    hall_old_sektor = hall_sektor;
   }
-  hall_old_sektor = hall_sektor;
 }
 
 void Brushless::Hall1_ISR()
@@ -280,7 +280,7 @@ void Brushless::Hall1_ISR()
     hall1 = 0;
   else
     hall1 = 1;
-  calc_rotation();
+  proc_hall();
 }
 void Brushless::Hall2_ISR()
 {
@@ -288,7 +288,7 @@ void Brushless::Hall2_ISR()
     hall2 = 0;
   else
     hall2 = 1;
-  calc_rotation();
+  proc_hall();
 }
 void Brushless::Hall3_ISR()
 {
@@ -296,19 +296,52 @@ void Brushless::Hall3_ISR()
     hall3 = 0;
   else
     hall3 = 1;
-  calc_rotation();
+  proc_hall();
+}
+float fsdif(float f1, float f2){
+  if(f1>f2)
+    return fMod(f1-f2, TWO_PI);
+  else
+    return TWO_PI - fMod(f1-f2, TWO_PI);
+}
+String Brushless::getInfo(){
+  float hall = getHallAngle();
+  return ""
+         //+ dash("m",m_)
+         + dash("phi",phi_)
+         /* + dash("timer_count", hall_timer.getCount())
+         + dash("timer_overflws", hall_timer_ovrflws)
+
+         + dash("t_until_now", (((uint32_t)hall_timer_ovrflws-1)*65536
+                                     + hall_timer.getCount()))
+         + dash("predicted_t", hall_timer_predicted_ticks) */
+         //+ dash("hall", resolveSektor())
+         + dash("hall_angle", hall)
+         + dash("diff", fsdif(hall,phi_))
+    /* + dash("vx", vx_)
+    + dash("vy", vy_) //*/
+    //+ dash("bin_vx", SVM_HW_pins[vx_])
+    //+ dash("bin_vy", SVM_HW_pins[vy_])
+    /*
+    + dash("OCR1", OCR1_)
+    + dash("OCR2", OCR2_)
+    + dash("OCR3", OCR3_) //*/
+
+    /*+ dash("t0", t0_)
+    + dash("t1", t1_)
+    + dash("t2", t2_)// */
+          ;
 }
 
-
-String dash(String name, int val){
-  return (name + " " + String(val) + "\t");
-}
-String dash(String name, float val){
-  return (name + " " + String(val) + "\t");
-}
-String dash(String name, String val){
-  return (name + " " + val + "\t");
-}
+String dash(String name, uint32_t val){ return (name + " " + String(val) + "\t"); }
+String dash(String name, uint16_t val){ return (name + " " + String(val) + "\t"); }
+String dash(String name, uint8_t val){ return (name + " " + String(val) + "\t"); }
+String dash(String name, int32_t val){ return (name + " " + String(val) + "\t"); }
+String dash(String name, int16_t val){ return (name + " " + String(val) + "\t"); }
+String dash(String name, int8_t val){ return (name + " " + String(val) + "\t"); }
+String dash(String name, int val){ return (name + " " + String(val) + "\t"); }
+String dash(String name, float val){ return (name + " " + String(val) + "\t"); }
+String dash(String name, String val){ return (name + " " + val + "\t"); }
 
 float fMod(float a, float b)
 {
@@ -365,7 +398,27 @@ void Brushless::handler_overflow(void) {
  * 1000Hz = 1ms period
  */
 void Brushless::handler_control(void) {
+/*
+  bool static tog = 0;
+  tog = !tog;
+  if(tog)
+    GPIOB->regs->BRR = 0b0000000000000001;
+  else
+    GPIOB->regs->BSRR = 0b0000000000000001;*/
 
+  float static phi = 0;
+  /* continous rotation
+  phi += (TWO_PI * set_rps_ / control_freq_);
+  phi = fMod(phi, TWO_PI);
+   */
+  phi = getHallAngle() + PI_THIRD + set_rps_*TWO_PI - PI;
+  phi = fMod(phi, TWO_PI);
+  setPosition(phi);
+}
+
+void Brushless::handler_hall_timer() {
+
+  uint8_t static ovrflws = 0;
   bool static tog = 0;
   tog = !tog;
   if(tog)
@@ -373,7 +426,7 @@ void Brushless::handler_control(void) {
   else
     GPIOB->regs->BSRR = 0b0000000000000001;
 
-  phi += (TWO_PI * set_rps_ / control_freq_);
-  phi = fMod(phi, TWO_PI);
-  setPosition(0.85, phi);
+  if(hall_timer_ovrflws<255)
+    hall_timer_ovrflws++;
+
 }

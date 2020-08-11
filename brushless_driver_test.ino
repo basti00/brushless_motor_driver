@@ -1,7 +1,7 @@
 
 #include "Brushless.h"
 
-#define PERIOD 10
+#define PERIOD 1
 
 Brushless bldc;
 
@@ -47,17 +47,20 @@ void loop()
     poti = poti*(1-tp) + tp * avg_adc(PA0, 40)/4096; // 0..1
     //float static angle = 0;
     //angle += (6*PI/180) * duty;
+    if(poti < 0.03)
+      bldc.setModulation(0);
+    else
+      bldc.setModulation(0.85);
+    bldc.setRPS(poti); //*poti * 100);
+    printDash("forward",(float)(PI/3 + poti*TWO_PI - PI));
 
-    bldc.setRPS(poti*poti * 100);
     //bldc.setPosition(0.8,angle);
     //bldc.setPosition(duty,angle);
     //bldc.setPosition(0.8,duty*3*PI); // one and a half rotation
 
-    //printDash("millis", (int)millis());
-    printDash("poti", poti);
-    //printDash("Comp_value", comp_value);
-    //Serial.print(bldc.getInfo());
-
+    Serial.print(bldc.getInfo());
+    //printDash("free_loops", loops);
+    loops = 0;
     Serial.println();
   }
 }
