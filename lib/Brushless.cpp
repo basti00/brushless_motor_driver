@@ -83,7 +83,7 @@ void Brushless::setupPWMTimer(){
 
   // PWM-MODUL timer
   phase_pwm_timer.pause();
-  t_ = HZ_TO_US(20000);
+  t_ = HZ_TO_US(30000);
   phase_pwm_timer.setPeriod(t_);
   phase_pwm_timer.setMode(1, TIMER_OUTPUT_COMPARE);
   phase_pwm_timer.setMode(2, TIMER_OUTPUT_COMPARE);
@@ -309,12 +309,11 @@ String Brushless::getInfo(){
   return ""
          //+ dash("m",m_)
          + dash("phi",phi_)
-         /* + dash("timer_count", hall_timer.getCount())
-         + dash("timer_overflws", hall_timer_ovrflws)
-
-         + dash("t_until_now", (((uint32_t)hall_timer_ovrflws-1)*65536
-                                     + hall_timer.getCount()))
-         + dash("predicted_t", hall_timer_predicted_ticks) */
+         // + dash("timer_count", hall_timer.getCount())
+         // + dash("timer_overflws", hall_timer_ovrflws)
+         // + dash("t_until_now", (((uint32_t)hall_timer_ovrflws-1)*65536
+         //                               + hall_timer.getCount()))
+         + dash("predicted_t", hall_timer_predicted_ticks)
          //+ dash("hall", resolveSektor())
          + dash("hall_angle", hall)
          + dash("diff", fsdif(hall,phi_))
@@ -411,7 +410,8 @@ void Brushless::handler_control(void) {
   phi += (TWO_PI * set_rps_ / control_freq_);
   phi = fMod(phi, TWO_PI);
    */
-  phi = getHallAngle() + PI_THIRD + set_rps_*TWO_PI - PI;
+  setModulation(set_rps_);
+  phi = getHallAngle() + 2.84;
   phi = fMod(phi, TWO_PI);
   setPosition(phi);
 }
