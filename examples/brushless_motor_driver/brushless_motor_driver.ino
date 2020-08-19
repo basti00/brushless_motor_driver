@@ -1,4 +1,3 @@
-
 #include "Brushless.h"
 
 #define PERIOD 1
