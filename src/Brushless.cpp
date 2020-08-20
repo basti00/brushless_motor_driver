@@ -45,8 +45,6 @@ float Brushless::t2_=0;
 uint16_t Brushless::OCR1_=0;
 uint16_t Brushless::OCR2_=0;
 uint16_t Brushless::OCR3_=0;
-volatile SVM_vector Brushless::vx_ = SVM_V0;
-volatile SVM_vector Brushless::vy_ = SVM_V0;
 
 volatile uint16_t Brushless::control_freq_ = 0;
 volatile CNTRL_mode Brushless::cntrl_mode_ = CNTRL_staticVector;
@@ -149,68 +147,61 @@ void Brushless::setFixedAngleFromHall(){
 }
 
 
-
 uint16_t Brushless::setAngle(float angle_raw){
   phi_ = fMod(angle_raw, TWO_PI);
   uint8_t sector;
   alpha_ = fMod(angle_raw, PI_THIRD);
   //// todo probably noInterrupt(); needed
   if(phi_ < PI_THIRD){
-    vx_ = SVM_V1;
-    vy_ = SVM_V3;
+    //switching between v1 and v3
     sector = 0;
     OCR1_phase = SVM_A;
     OCR2_phase = SVM_B;
     OCR3_phase = SVM_C;
   } else if(phi_ < 2*PI_THIRD){
-    vx_ = SVM_V3;
-    vy_ = SVM_V2;
+    //switching between v2 and v3
     sector = 1;
     OCR1_phase = SVM_B;
     OCR2_phase = SVM_A;
     OCR3_phase = SVM_C;
   } else if(phi_ < 3*PI_THIRD){
-    vx_ = SVM_V2;
-    vy_ = SVM_V6;
+    //switching between v2 and v6
     sector = 2;
     OCR1_phase = SVM_B;
     OCR2_phase = SVM_C;
     OCR3_phase = SVM_A;
   } else if(phi_ < 4*PI_THIRD){
-    vx_ = SVM_V6;
-    vy_ = SVM_V4;
+    //switching between v4 and v6
     sector = 3;
     OCR1_phase = SVM_C;
     OCR2_phase = SVM_B;
     OCR3_phase = SVM_A;
   } else if(phi_ < 5*PI_THIRD){
-    vx_ = SVM_V4;
-    vy_ = SVM_V5;
+    //switching between v4 and v5
     sector = 4;
     OCR1_phase = SVM_C;
     OCR2_phase = SVM_A;
     OCR3_phase = SVM_B;
   } else {
-    vx_ = SVM_V5;
-    vy_ = SVM_V1;
+    //switching between v1 and v5
     sector = 5;
     OCR1_phase = SVM_A;
     OCR2_phase = SVM_C;
     OCR3_phase = SVM_B;
   }
-  t1_ = t_ * m_ * sin((PI_THIRD - alpha_));
-  t2_ = t_ * m_ * sin(alpha_);
+
+  /* t0 is time to be on v0 and v7
+   * t1 and t2 is time to be on the two vectors
+   *
+   */
   t0_ = t_ - t1_ - t2_;
   float t0_half = t0_/2;
-
-  //reverse the order of
   if(sector % 2){
-    float temp_t1 = t1_;
-    t1_ = t2_;
-    t2_ = temp_t1;
-    SVM_vector temp_vx = vx_;
-    vx_ = vy_;
-    vy_ = temp_vx;
+    t1_ = t_ * m_ * sin(alpha_);
+    t2_ = t_ * m_ * sin((PI_THIRD - alpha_));
+  }else{
+    t1_ = t_ * m_ * sin((PI_THIRD - alpha_));
+    t2_ = t_ * m_ * sin(alpha_);
   }
 
   float ovrflw = phase_pwm_timer.getOverflow();

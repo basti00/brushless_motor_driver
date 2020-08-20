@@ -1,4 +1,8 @@
 //
+// Library to demonstrate Space Vector Modulation using three center-aligned
+// pwm with alternating reversing sequence
+// for more infomation see:
+// http://www.kappaiq.com/download/presentation-material/PDF/05%20Modulation.pdf
 // Created by uhlse on 04.08.2020.
 //
 
@@ -44,17 +48,6 @@ const uint16_t SVM_phase_pin[] = {
         (1<<IN_C_),  //SVM_C,
         0  //SVM_NONE,
 };
-
-typedef enum SVM_vector{
-  SVM_V0, // all connected to GND
-  SVM_V1,
-  SVM_V3,
-  SVM_V2,
-  SVM_V6,
-  SVM_V4,
-  SVM_V5,
-  SVM_V7, // all connected to VCC
-}SVM_vector;
 
 typedef enum CNTRL_mode{
   CNTRL_fixedAngleFromHall,
@@ -175,8 +168,6 @@ class Brushless
     static uint16_t OCR1_; // timer overflow values
     static uint16_t OCR2_;
     static uint16_t OCR3_;
-    volatile static SVM_vector vx_; // redundant! the two vectors to modulate with
-    volatile static SVM_vector vy_;
 };
 
 
