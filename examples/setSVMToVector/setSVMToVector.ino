@@ -53,9 +53,9 @@ void loop()
   if(enoughTimeHasPassed()){
     float input = getFilteredInput();
     if(input < 0.03)
-      bldc.setMagnitude(0);
+      bldc.setVector(0, input*4*PI);
     else
-      bldc.setVector(0.8, input*4*PI); //range is two rotations
+      bldc.setVector(0.8, input*4*PI);
 
     Serial.print(bldc.getInfo());
     Serial.println();

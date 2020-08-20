@@ -129,11 +129,9 @@ void Brushless::setMagnitude(float mag){
 }
 
 void Brushless::setVector(float mag, float angle) {
-  noInterrupts();
   cntrl_mode_ = CNTRL_staticVector;
   setAngle(angle);
   setMagnitude(mag);
-  interrupts();
 }
 
 void Brushless::setSpeed(float rad_per_sec)
