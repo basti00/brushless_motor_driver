@@ -5,11 +5,14 @@
 #include "Arduino.h"
 #include "Brushless.h"
 
+// center aligned timer to control PWM module switching
 HardwareTimer phase_pwm_timer(2);
+// to execute periodic control procedures
 HardwareTimer control_timer(3);
+// timer to estimate the current rotor pos from hall sensor signals
 HardwareTimer hall_timer(4);
 
-// check if timer is counting up or do wn
+// check if pwm-timer is counting up or do wn
 #define TIMER_DIRECTION ((TIMER2->regs).bas->CR1 & 1<<4)
 #define HZ_TO_US(f) (1000000/f)
 #define PI_THIRD 1.04719755f
@@ -28,9 +31,6 @@ int8_t volatile Brushless::hall_direction = 0;
 uint8_t volatile Brushless::hall_timer_ovrflws = 0;
 uint32_t volatile Brushless::hall_timer_predicted_ticks = 0;
 
-volatile SVM_vector Brushless::vx_ = SVM_V0;
-volatile SVM_vector Brushless::vy_ = SVM_V0;
-
 volatile SVM_phase Brushless::OCR1_phase = SVM_NONE;
 volatile SVM_phase Brushless::OCR2_phase = SVM_NONE;
 volatile SVM_phase Brushless::OCR3_phase = SVM_NONE;
@@ -45,17 +45,17 @@ float Brushless::t2_=0;
 uint16_t Brushless::OCR1_=0;
 uint16_t Brushless::OCR2_=0;
 uint16_t Brushless::OCR3_=0;
+volatile SVM_vector Brushless::vx_ = SVM_V0;
+volatile SVM_vector Brushless::vy_ = SVM_V0;
 
 volatile uint16_t Brushless::control_freq_ = 0;
-volatile float Brushless::set_rps_ = 0;
+volatile CNTRL_mode Brushless::cntrl_mode_ = CNTRL_staticVector;
+volatile float Brushless::radians_per_sec_ = 0;
 
 
 Brushless::Brushless()
 {
   //debug
-  pinMode(PC13, OUTPUT);
-  pinMode(PC14, OUTPUT);
-  pinMode(PC15, OUTPUT);
   pinMode(PB0, OUTPUT);
 
   // Output
@@ -73,17 +73,17 @@ Brushless::Brushless()
   pinMode(HAL1, INPUT_PULLUP);
   pinMode(HAL2, INPUT_PULLUP);
   pinMode(HAL3, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(HAL1), Hall1_ISR, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(HAL2), Hall2_ISR, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(HAL3), Hall3_ISR, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(HAL1), handler_hall1, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(HAL2), handler_hall2, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(HAL3), handler_hall3, CHANGE);
 }
 
 void Brushless::setupPWMTimer(){
   // Pause the timer while we're configuring it
 
-  // PWM-MODUL timer
+  // PWM-module timer
   phase_pwm_timer.pause();
-  t_ = HZ_TO_US(30000);
+  t_ = HZ_TO_US(10000);
   phase_pwm_timer.setPeriod(t_);
   phase_pwm_timer.setMode(1, TIMER_OUTPUT_COMPARE);
   phase_pwm_timer.setMode(2, TIMER_OUTPUT_COMPARE);
@@ -123,27 +123,36 @@ void Brushless::setupPWMTimer(){
   hall_timer.resume();
 }
 
-uint16_t Brushless::setDutycyle(float dutycycle){
-  /*int comp = (phase_pwm_timer.getOverflow()*dutycycle)/100;
-  phase_pwm_timer.setCompare(TIMER_CH1, comp);
-  phase_pwm_timer.setCompare(TIMER_CH2, comp/2);
-  phase_pwm_timer.setCompare(TIMER_CH3, comp/3);
-  Serial.print(comp);
-  return comp;*/
+
+void Brushless::setMagnitude(float mag){
+  m_ = mag;
 }
 
-uint16_t Brushless::setRPS(float rps)
-{
+void Brushless::setVector(float mag, float angle) {
   noInterrupts();
-  set_rps_ = rps;
+  cntrl_mode_ = CNTRL_staticVector;
+  setAngle(angle);
+  setMagnitude(mag);
   interrupts();
 }
 
-void Brushless::setModulation(float m_param){
-  m_ = m_param;
+void Brushless::setSpeed(float rad_per_sec)
+{
+  noInterrupts();
+  cntrl_mode_ = CNTRL_continousRotation;
+  radians_per_sec_ = rad_per_sec;
+  interrupts();
 }
 
-uint16_t Brushless::setPosition(float angle_raw){
+void Brushless::setFixedAngleFromHall(){
+  noInterrupts();
+  cntrl_mode_ = CNTRL_fixedAngleFromHall;
+  interrupts();
+}
+
+
+
+uint16_t Brushless::setAngle(float angle_raw){
   phi_ = fMod(angle_raw, TWO_PI);
   uint8_t sector;
   alpha_ = fMod(angle_raw, PI_THIRD);
@@ -196,6 +205,7 @@ uint16_t Brushless::setPosition(float angle_raw){
   t0_ = t_ - t1_ - t2_;
   float t0_half = t0_/2;
 
+  //reverse the order of
   if(sector % 2){
     float temp_t1 = t1_;
     t1_ = t2_;
@@ -218,6 +228,46 @@ uint16_t Brushless::setPosition(float angle_raw){
 
   return 0;
 }
+
+
+void inline setOutputPhase(SVM_phase phase){
+  GPIOB->regs->BSRR = /*PHASE_MASK & */SVM_phase_pin[phase];
+}
+void inline resetOutputPhase(SVM_phase phase){
+  GPIOB->regs->BRR = /*PHASE_MASK & */SVM_phase_pin[phase];
+}
+
+void Brushless::handler_pwm1(void) {
+  if(TIMER_DIRECTION)
+    resetOutputPhase(OCR1_phase);
+  else
+    setOutputPhase(OCR1_phase);
+}
+
+void Brushless::handler_pwm2(void) {
+  if(TIMER_DIRECTION)
+    resetOutputPhase(OCR2_phase);
+  else
+    setOutputPhase(OCR2_phase);
+}
+
+void Brushless::handler_pwm3(void) {
+  if(TIMER_DIRECTION)
+    resetOutputPhase(OCR3_phase);
+  else
+    setOutputPhase(OCR3_phase);
+}
+
+void Brushless::handler_overflow(void) {
+  // to generate a trigger reference on oscilloscope
+  if(TIMER_DIRECTION)
+    GPIOB->regs->BRR = 0b0000000000000001;
+  else
+    GPIOB->regs->BSRR = 0b0000000000000001; //*/
+}
+
+
+////////// Hall sensor start
 
 uint8_t Brushless::resolveSektor(){
   if(hall_sektor==1) return 0;
@@ -249,7 +299,6 @@ void Brushless::proc_hall(){
     return;
   }
   if(hall_sektor != hall_old_sektor){
-    //handler_sections();  //// advancing commutation sector
     hall_timer.pause();
     hall_timer_predicted_ticks = (hall_timer_ovrflws-1)*65536 + hall_timer.getCount();
     hall_timer.setCount(0);
@@ -274,7 +323,7 @@ void Brushless::proc_hall(){
   }
 }
 
-void Brushless::Hall1_ISR()
+void Brushless::handler_hall1()
 {
   if(digitalRead(HAL1) == LOW)
     hall1 = 0;
@@ -282,7 +331,7 @@ void Brushless::Hall1_ISR()
     hall1 = 1;
   proc_hall();
 }
-void Brushless::Hall2_ISR()
+void Brushless::handler_hall2()
 {
   if(digitalRead(HAL2) == LOW)
     hall2 = 0;
@@ -290,7 +339,7 @@ void Brushless::Hall2_ISR()
     hall2 = 1;
   proc_hall();
 }
-void Brushless::Hall3_ISR()
+void Brushless::handler_hall3()
 {
   if(digitalRead(HAL3) == LOW)
     hall3 = 0;
@@ -298,12 +347,16 @@ void Brushless::Hall3_ISR()
     hall3 = 1;
   proc_hall();
 }
+
 float fsdif(float f1, float f2){
   if(f1>f2)
     return fMod(f1-f2, TWO_PI);
   else
     return TWO_PI - fMod(f1-f2, TWO_PI);
 }
+
+////////// Hall sensor end
+
 String Brushless::getInfo(){
   float hall = getHallAngle();
   return ""
@@ -357,76 +410,31 @@ float fMod(float a, float b)
   return mod;
 }
 
-void inline setOutputPhase(SVM_phase phase){
-  GPIOB->regs->BSRR = /*PHASE_MASK & */SVM_phase_pin[phase];
-}
-void inline resetOutputPhase(SVM_phase phase){
-  GPIOB->regs->BRR = /*PHASE_MASK & */SVM_phase_pin[phase];
-}
-
-void Brushless::handler_pwm1(void) {
-  if(TIMER_DIRECTION)
-    resetOutputPhase(OCR1_phase);
-  else
-    setOutputPhase(OCR1_phase);
-}
-
-void Brushless::handler_pwm2(void) {
-  if(TIMER_DIRECTION)
-    resetOutputPhase(OCR2_phase);
-  else
-    setOutputPhase(OCR2_phase);
-}
-
-void Brushless::handler_pwm3(void) {
-  if(TIMER_DIRECTION)
-    resetOutputPhase(OCR3_phase);
-  else
-    setOutputPhase(OCR3_phase);
-}
-
-void Brushless::handler_overflow(void) {
-  /*if(TIMER_DIRECTION)
-    GPIOB->regs->BRR = 0b0000000000000001;
-  else
-    GPIOB->regs->BSRR = 0b0000000000000001; //*/
-
-}
-
-/*
- * 1000Hz = 1ms period
- */
 void Brushless::handler_control(void) {
-/*
-  bool static tog = 0;
-  tog = !tog;
-  if(tog)
-    GPIOB->regs->BRR = 0b0000000000000001;
-  else
-    GPIOB->regs->BSRR = 0b0000000000000001;*/
 
-  float static phi = 0;
-  /* continous rotation
-  phi += (TWO_PI * set_rps_ / control_freq_);
-  phi = fMod(phi, TWO_PI);
-   */
-  setModulation(set_rps_);
-  phi = getHallAngle() + 2.84;
-  phi = fMod(phi, TWO_PI);
-  setPosition(phi);
+  switch(cntrl_mode_ ){
+    case CNTRL_fixedAngleFromHall:{
+      float phi = getHallAngle() + 2.84;
+      phi = fMod(phi, TWO_PI);
+      setMagnitude(m_);
+      setAngle(phi);
+    }
+      break;
+    case CNTRL_continousRotation:{
+      float static phi = 0;
+      phi += ( radians_per_sec_ / control_freq_);
+      phi = fMod(phi, TWO_PI);
+      setMagnitude(m_);
+      setAngle(phi);
+    }
+      break;
+    case CNTRL_staticVector:
+      break;
+  }
 }
 
 void Brushless::handler_hall_timer() {
-
   uint8_t static ovrflws = 0;
-  bool static tog = 0;
-  tog = !tog;
-  if(tog)
-    GPIOB->regs->BRR = 0b0000000000000001;
-  else
-    GPIOB->regs->BSRR = 0b0000000000000001;
-
   if(hall_timer_ovrflws<255)
     hall_timer_ovrflws++;
-
 }
