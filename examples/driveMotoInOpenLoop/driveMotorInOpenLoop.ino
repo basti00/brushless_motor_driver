@@ -1,8 +1,3 @@
-/*
- * Drives the motor in open loop. The SVM rotates a vector at a constant rate.
- * ADC input varies the speed from 0 to 1000 rad/sec.
- */
-
 #include "Brushless.h"
 
 #define PERIOD 1
@@ -12,6 +7,7 @@ Brushless bldc;
 
 void setup() {
   bldc.setupPWMTimer();
+  pinMode(PC13, OUTPUT);
   Serial.begin(115200);
   delay(1);
 }
@@ -36,31 +32,28 @@ float getFilteredInput(){
   inp = inp * (1-tp) + tp * avg_adc(ADC_PIN, 40)/4096;
 }
 
-/*
- * is true only after set amount of ms, otherwise false
- */
-bool enoughTimeHasPassed(){
-  unsigned long static time_now = millis();
-  if(millis() >= time_now + PERIOD){
-    time_now += PERIOD;
-    return true;
-  }
-  return false;
-}
+float deg = 6*PI/180;
 
 void loop()
 {
-  if(enoughTimeHasPassed()){
+  int static loops = 0;
+  unsigned long static time_now = millis();
+  loops++;
+
+  if(millis() >= time_now + PERIOD){
+    time_now += PERIOD;
+
     float input = getFilteredInput();
-    //bldc.setMagnitude(1.2*input);
-    //bldc.setSpeed(PI/6);
     if(input < 0.03)
       bldc.setMagnitude(0);
     else
-      bldc.setMagnitude(0.8);
-    bldc.setSpeed(input*input*1000);
+      bldc.setMagnitude(input);
+    bldc.setFixedAngleFromHall();
+
 
     Serial.print(bldc.getInfo());
+    //printDash("free_loops", loops);
+    loops = 0;
     Serial.println();
   }
 }

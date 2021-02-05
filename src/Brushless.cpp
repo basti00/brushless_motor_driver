@@ -152,60 +152,59 @@ uint16_t Brushless::setAngle(float angle_raw){
   uint8_t sector;
   alpha_ = fMod(angle_raw, PI_THIRD);
   //// todo probably noInterrupt(); needed
-  if(phi_ < PI_THIRD){
-    //switching between v1 and v3
+  if(phi_ < PI_THIRD){  //todo exchange if-construct with bool logic
+    //switching between v1 and v3 (001 and 011)
     sector = 0;
-    OCR1_phase = SVM_A;
-    OCR2_phase = SVM_B;
-    OCR3_phase = SVM_C;
+    OCR1_phase = SVM_A; // switch on first, switch off last
+    OCR2_phase = SVM_B; // switch on second,
+    OCR3_phase = SVM_C; // only switch on during v7
   } else if(phi_ < 2*PI_THIRD){
-    //switching between v2 and v3
+    //switching between v2 and v3 (010 and 011)
     sector = 1;
     OCR1_phase = SVM_B;
     OCR2_phase = SVM_A;
     OCR3_phase = SVM_C;
   } else if(phi_ < 3*PI_THIRD){
-    //switching between v2 and v6
+    //switching between v2 and v6 (010 and 110)
     sector = 2;
     OCR1_phase = SVM_B;
     OCR2_phase = SVM_C;
     OCR3_phase = SVM_A;
   } else if(phi_ < 4*PI_THIRD){
-    //switching between v4 and v6
+    //switching between v4 and v6 (100 and 110)
     sector = 3;
     OCR1_phase = SVM_C;
     OCR2_phase = SVM_B;
     OCR3_phase = SVM_A;
   } else if(phi_ < 5*PI_THIRD){
-    //switching between v4 and v5
+    //switching between v4 and v5 (100 and 101)
     sector = 4;
     OCR1_phase = SVM_C;
     OCR2_phase = SVM_A;
     OCR3_phase = SVM_B;
   } else {
-    //switching between v1 and v5
+    //switching between v1 and v5 (001 and 101)
     sector = 5;
     OCR1_phase = SVM_A;
     OCR2_phase = SVM_C;
     OCR3_phase = SVM_B;
   }
 
-  /* t0 is time to be on v0 and v7
+  /* t0_ is time to be on v0 and v7
    * t1 and t2 is time to be on the two vectors
    *
    */
-  t0_ = t_ - t1_ - t2_;
-  float t0_half = t0_/2;
-  if(sector % 2){
+  if(sector % 2){ //switch switching order every second sector to reduce switching losses
     t1_ = t_ * m_ * sin(alpha_);
     t2_ = t_ * m_ * sin((PI_THIRD - alpha_));
   }else{
     t1_ = t_ * m_ * sin((PI_THIRD - alpha_));
     t2_ = t_ * m_ * sin(alpha_);
   }
+  t0_ = t_ - t1_ - t2_;
 
   float ovrflw = phase_pwm_timer.getOverflow();
-  OCR1_ = ovrflw * t0_half / t_;
+  OCR1_ = ovrflw * (t0_/2) / t_;
   OCR2_ = OCR1_ + ovrflw * t1_ / t_;
   OCR3_ = OCR2_ + ovrflw * t2_ / t_;
 
